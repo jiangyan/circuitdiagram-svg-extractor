@@ -400,13 +400,361 @@ After extraction, verify:
               for conn in connections)
    ```
 
+## Vertical Routing Connections (st17 Polylines)
+
+### Problem: Not All Connections Have Wire Specs
+
+Some connections use vertical routing arrows instead of horizontal wires with specifications. These are encoded as `<polyline class="st17">` elements in the SVG.
+
+### SVG Structure
+
+```xml
+<polyline class="st17" points="841,119 924.6,119 924.6,382.8"/>
+```
+
+This represents an L-shaped routing arrow connecting two points.
+
+### Algorithm for Vertical Routing
+
+```python
+def extract_vertical_routing_connections(svg_file, text_elements):
+    # Find all st17 polyline elements
+    polylines = root.findall('.//{http://www.w3.org/2000/svg}polyline[@class="st17"]')
+
+    for polyline in polylines:
+        # Parse points: "x1,y1 x2,y2 x3,y3 ..."
+        points_str = polyline.get('points', '').strip().split()
+        if len(points_str) < 2:
+            continue
+
+        # Extract first and last points
+        first_point = points_str[0].split(',')
+        last_point = points_str[-1].split(',')
+        start_x, start_y = float(first_point[0]), float(first_point[1])
+        end_x, end_y = float(last_point[0]), float(last_point[1])
+
+        # Find nearest connection point to each endpoint (within 100 units)
+        endpoint1 = find_nearest_connection_point(start_x, start_y, text_elements)
+        endpoint2 = find_nearest_connection_point(end_x, end_y, text_elements)
+
+        if not endpoint1 or not endpoint2:
+            continue
+
+        # Determine direction: splice points (SP*) are ALWAYS destinations
+        ep1_is_splice = is_splice_point(endpoint1.connector_id)
+        ep2_is_splice = is_splice_point(endpoint2.connector_id)
+
+        if ep1_is_splice and not ep2_is_splice:
+            source, dest = endpoint2, endpoint1  # Pin → Splice
+        elif ep2_is_splice and not ep1_is_splice:
+            source, dest = endpoint1, endpoint2  # Pin → Splice
+        else:
+            # Neither or both are splices - use Y coordinate
+            # Lower Y value = higher up = destination
+            if start_y > end_y:
+                source, dest = endpoint1, endpoint2
+            else:
+                source, dest = endpoint2, endpoint1
+
+        # Create connection (no wire specs for vertical routing)
+        connections.append({
+            'from_id': source.connector_id,
+            'from_pin': source.pin,
+            'to_id': dest.connector_id,
+            'to_pin': dest.pin,
+            'wire_dm': '',
+            'wire_color': ''
+        })
+```
+
+### Helper Function: Find Nearest Connection Point
+
+```python
+def find_nearest_connection_point(target_x, target_y, text_elements, max_distance=100):
+    """
+    Find the nearest pin or splice point to a target coordinate.
+    Used for vertical routing where polyline endpoints may not exactly align.
+    """
+    import math
+
+    nearest = None
+    min_distance = float('inf')
+
+    for elem in text_elements:
+        # Check for pin numbers (digits) or splice points (SP*)
+        if elem['content'].isdigit() or is_splice_point(elem['content']):
+            dist = math.sqrt((elem['x'] - target_x)**2 + (elem['y'] - target_y)**2)
+
+            if dist < max_distance and dist < min_distance:
+                min_distance = dist
+
+                if is_splice_point(elem['content']):
+                    # It's a splice point
+                    nearest = ConnectionPoint(elem['content'], '', elem['x'], elem['y'])
+                else:
+                    # It's a pin - find the connector above it
+                    connector = find_connector_above_pin(elem['x'], elem['y'], text_elements)
+                    if connector:
+                        nearest = ConnectionPoint(connector, elem['content'], elem['x'], elem['y'])
+
+    return nearest
+```
+
+### Multi-Segment Polylines (CRITICAL)
+
+Some polylines have more than 2 points and connect **multiple pins to one splice**:
+
+```xml
+<!-- 5-point polyline: FL7611 pin 1 and pin 9 both connect to SP025 -->
+<polyline class="st17" points="718.4,678.9 800.6,678.9 800.6,384.4 781,653 718,653"/>
+```
+
+**Detection and handling:**
+
+```python
+# If both endpoints are pins (not splices) AND there are intermediate points
+if len(points_str) > 2 and not ep1_is_splice and not ep2_is_splice:
+    # Check intermediate points for splice points
+    for i in range(1, len(points_str) - 1):  # Skip first and last
+        point = points_str[i].split(',')
+        px, py = float(point[0]), float(point[1])
+        intermediate = find_nearest_connection_point(px, py, text_elements)
+
+        if intermediate and is_splice_point(intermediate.connector_id):
+            # Found splice in the middle - create TWO connections:
+            # Connection 1: endpoint1 → splice
+            # Connection 2: endpoint2 → splice
+            connections.append(create_connection(endpoint1, intermediate))
+            connections.append(create_connection(endpoint2, intermediate))
+            break  # Skip normal single-connection logic
+```
+
+**Example:** FL7611 pin 1 → SP025 and FL7611 pin 9 → SP025
+
+## Ground Connections (st17 Paths)
+
+### Problem: Ground Symbols Use Path Elements
+
+Ground connections (e.g., to symbols like `G22B(m)`) use `<path class="st17">` elements as arrowheads, not polylines.
+
+### Ground Connector Pattern
+
+Ground connectors are identified by parentheses containing a lowercase letter:
+
+```regex
+^[A-Z]+\d+[A-Z]*\([a-z]\)$
+```
+
+**Examples:**
+- `G22B(m)` - Ground point (m)
+- `G05(z)` - Ground point (z)
+
+### SVG Structure
+
+```xml
+<path class="st17" d="M977.9,384.4c-29.2,0,-191.9,0,-217.4,0h-28.9c-3.1,0,-6.8,0,-10.8,0"/>
+<text transform="matrix(1 0 0 1 1088.4135 382.4229)">G22B(m)</text>
+```
+
+### Algorithm for Ground Connections
+
+```python
+def extract_ground_connections(svg_file, text_elements):
+    # Find all st17 path elements
+    paths = root.findall('.//{http://www.w3.org/2000/svg}path[@class="st17"]')
+
+    for path in paths:
+        d_attr = path.get('d', '')
+        if not d_attr:
+            continue
+
+        # Parse M command to get arrow location
+        m_match = re.match(r'M([\d.]+),([\d.]+)', d_attr)
+        if not m_match:
+            continue
+
+        path_x, path_y = float(m_match.group(1)), float(m_match.group(2))
+
+        # Find all connection points on the same horizontal line
+        # Within ±10 Y units AND ±200 X units of arrow
+        connection_points = []
+
+        for elem in text_elements:
+            is_connection_point = (elem['content'].isdigit() or
+                                 is_splice_point(elem['content']) or
+                                 is_connector_id(elem['content']))
+            if is_connection_point:
+                y_dist = abs(elem['y'] - path_y)
+                x_dist = abs(elem['x'] - path_x)
+
+                # Must be on same horizontal line AND reasonably close
+                if y_dist < 10 and x_dist < 200:
+                    if elem['content'].isdigit():
+                        # Pin: find connector above (prefer *2FL for ground)
+                        connector = find_connector_above_pin_for_ground(
+                            elem['x'], elem['y'], text_elements
+                        )
+                        if connector:
+                            connection_points.append((elem['x'], connector, elem['content']))
+                    elif is_connector_id(elem['content']):
+                        # Ground connector or splice
+                        connection_points.append((elem['x'], elem['content'], ''))
+
+        # Filter: only create connection if one endpoint is a GROUND connector
+        has_ground = any('(' in p[1] for p in connection_points)
+        if not has_ground:
+            continue  # Skip - this is regular routing handled elsewhere
+
+        # Find the pair with maximum X distance
+        if len(connection_points) >= 2:
+            connection_points.sort(key=lambda p: p[0])  # Sort by X
+            max_dist = 0
+            best_pair = None
+
+            for i in range(len(connection_points)):
+                for j in range(i + 1, len(connection_points)):
+                    p1, p2 = connection_points[i], connection_points[j]
+                    dist = abs(p2[0] - p1[0])
+
+                    # Check if one is ground
+                    is_ground = ('(' in p1[1]) or ('(' in p2[1])
+
+                    if dist > max_dist and is_ground:
+                        max_dist = dist
+                        best_pair = (p1, p2)
+
+            if best_pair:
+                left, right = best_pair
+                connections.append({
+                    'from_id': left[1],
+                    'from_pin': left[2],
+                    'to_id': right[1],
+                    'to_pin': right[2],
+                    'wire_dm': '',
+                    'wire_color': ''
+                })
+```
+
+### CRITICAL: Junction Connector Selection for Ground
+
+When a pin is shared by junction connectors (e.g., both FL2MH and MH2FL are above pin 73), **ground connections must prefer the `*2FL` variant**:
+
+```python
+def find_connector_above_pin_for_ground(pin_x, pin_y, text_elements):
+    """
+    Find connector above pin, preferring *2FL variants for ground connections.
+    """
+    connectors_above = []
+
+    for elem in text_elements:
+        if is_connector_id(elem['content']):
+            x_dist = abs(elem['x'] - pin_x)
+            y_dist = pin_y - elem['y']
+
+            is_junction = ('2FL' in elem['content'] or 'FL2' in elem['content'])
+            max_x_dist = 100 if is_junction else 50
+
+            if x_dist < max_x_dist and y_dist > 5:
+                connectors_above.append((y_dist, elem['content'], elem['x'], elem['y']))
+
+    if not connectors_above:
+        return None
+
+    connectors_above.sort(key=lambda c: c[0])  # Sort by Y distance
+
+    # CRITICAL: Prefer *2FL pattern (MH2FL, FTL2FL) for ground connections
+    to_fl_variants = [c for c in connectors_above if c[1].endswith('2FL')]
+    if to_fl_variants:
+        return to_fl_variants[0][1]  # Return MH2FL instead of FL2MH
+
+    # Fall back to closest connector
+    return connectors_above[0][1]
+```
+
+**Example:**
+- Pin 73 is below both FL2MH (X=969.8) and MH2FL (X=995.4)
+- Ground wire connects to the right side of the junction
+- **Correct:** MH2FL pin 73 → G22B(m)
+- **Incorrect:** FL2MH pin 73 → G22B(m)
+
+**Why:** Ground wires come from the destination/input side of junction connectors (*2FL pattern).
+
+### Deduplication for Vertical/Ground Connections
+
+Multiple st17 path arrows may point to the same connection. Deduplicate at the end:
+
+```python
+# After extracting all vertical routing connections
+seen = set()
+unique_connections = []
+for conn in vertical_connections:
+    key = (conn['from_id'], conn['from_pin'], conn['to_id'], conn['to_pin'])
+    if key not in seen:
+        seen.add(key)
+        unique_connections.append(conn)
+```
+
+## Connection Type Summary
+
+Your final output should include THREE types of connections:
+
+| Type | Element | Direction Rule | Wire Specs |
+|------|---------|----------------|------------|
+| Horizontal wires | Text: wire specs | Wire-centric algorithm | Yes (0.35,GY/PU) |
+| Vertical routing | `<polyline class="st17">` | Splice = destination | No |
+| Ground connections | `<path class="st17">` | Ground = destination, prefer *2FL | No |
+
+**Example Output:**
+
+```markdown
+| From | From Pin | To | To Pin | Wire DM | Color |
+|------|----------|-----|--------|---------|-------|
+| FL2MH | 1 | FL7210 | 4 | 0.35 | GY/PU |        ← Horizontal wire
+| FL7210B | 3 | SP025 |  |  |  |                   ← Vertical routing
+| MH2FL | 73 | G22B(m) |  |  |  |                  ← Ground connection
+```
+
+## Validation Checks (Updated)
+
+After extraction, verify:
+
+1. **No `*2FL` variants as sources (horizontal wires only):**
+   ```python
+   horizontal_conns = [c for c in connections if c['wire_dm']]
+   assert all(not conn['from_id'].endswith('2FL')
+              for conn in horizontal_conns)
+   ```
+
+2. **No `FL2*` variants as destinations (horizontal wires only):**
+   ```python
+   assert all(not conn['to_id'].startswith('FL2')
+              for conn in horizontal_conns)
+   ```
+
+3. **Ground connectors only appear as destinations:**
+   ```python
+   ground_conns = [c for c in connections if '(' in c['to_id']]
+   assert all('(' not in conn['from_id'] for conn in ground_conns)
+   ```
+
+4. **Splice points appear as destinations in vertical routing:**
+   ```python
+   vertical_conns = [c for c in connections if not c['wire_dm']]
+   assert all(not is_splice_point(conn['from_id'])
+              for conn in vertical_conns)
+   ```
+
 ## Summary: The Golden Rules
 
-1. **Wire-centric, not connector-centric**
+1. **Wire-centric, not connector-centric** (for horizontal wires)
 2. **±10 Y-axis tolerance for horizontal alignment**
 3. **Junction direction matters: `*2FL` = destinations, `FL2*` = sources**
 4. **Find connector directly above pin, not closest overall**
 5. **Deduplicate pin pairs to handle overlapping wires**
-6. **Sort output by connector ID, then pin number**
+6. **Vertical routing: splice points are always destinations**
+7. **Ground connections: prefer `*2FL` junction variants**
+8. **Multi-segment polylines: check intermediate points for splices**
+9. **st17 paths are ground arrowheads, only create if ground connector present**
+10. **Sort output by connector ID, then pin number**
 
 Follow these rules exactly, and you will extract accurate wire connections from circuit diagram SVGs.
