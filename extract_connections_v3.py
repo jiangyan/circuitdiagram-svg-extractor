@@ -89,10 +89,16 @@ def parse_svg_elements(svg_file: str) -> tuple[List[dict], List[dict], List[dict
 
 
 def is_connector_id(text: str) -> bool:
-    """Check if text is a connector ID"""
+    """Check if text is a connector ID (including ground points like G22B(m))"""
     if text.startswith('SP'):  # Exclude splices
         return False
-    return bool(re.match(r'^[A-Z]{2,3}\d{1,5}[A-Z]{0,3}$', text))
+    # Standard connector pattern
+    if re.match(r'^[A-Z]{2,3}\d{1,5}[A-Z]{0,3}$', text):
+        return True
+    # Ground point pattern: G22B(m), G05(z), etc.
+    if re.match(r'^[A-Z]+\d+[A-Z]*\([a-z]\)$', text):
+        return True
+    return False
 
 
 def is_splice_point(text: str) -> bool:
@@ -404,6 +410,228 @@ def extract_all_connections(svg_file: str) -> List[Connection]:
     return connections
 
 
+def find_nearest_connection_point(target_x: float, target_y: float, text_elements: List[dict],
+                                   max_distance: float = 100) -> Optional[Tuple[str, str, float, float]]:
+    """Find the nearest pin/splice/connector to a target coordinate
+
+    Used for vertical routing where polyline endpoints may not be exactly at connection points.
+
+    Returns: (connector_id, pin, x, y) or None
+    """
+    import math
+
+    nearest = None
+    min_distance = float('inf')
+
+    for elem in text_elements:
+        # Check for pin numbers (digits) or splice points (SP*)
+        if elem['content'].isdigit() or is_splice_point(elem['content']):
+            dist = math.sqrt((elem['x'] - target_x)**2 + (elem['y'] - target_y)**2)
+            if dist < min_distance and dist < max_distance:
+                min_distance = dist
+                # Find the connector/splice for this pin
+                if is_splice_point(elem['content']):
+                    nearest = (elem['content'], '', elem['x'], elem['y'])
+                else:
+                    # This is a pin number, find connector above it
+                    connector_result = find_connector_above_pin(elem['x'], elem['y'], text_elements)
+                    if connector_result:
+                        nearest = (connector_result[0], elem['content'], elem['x'], elem['y'])
+
+    return nearest
+
+
+def extract_vertical_routing_connections(svg_file: str, text_elements: List[dict]) -> List[Connection]:
+    """Extract vertical routing arrow connections (class='st17' polylines)
+
+    Vertical routing arrows are represented as multi-point polylines that form
+    L-shaped or staircase paths connecting pins/connectors vertically.
+
+    Args:
+        svg_file: Path to SVG file
+        text_elements: List of text elements (from parse_svg_elements)
+
+    Returns:
+        List of Connection objects for vertical routes
+    """
+    tree = ET.parse(svg_file)
+    root = tree.getroot()
+
+    vertical_connections = []
+
+    # Process both polyline and path elements with class='st17' (routing arrows)
+    routing_elements = []
+
+    # Collect polylines
+    for polyline in root.iter('{http://www.w3.org/2000/svg}polyline'):
+        if polyline.get('class', '') == 'st17':
+            routing_elements.append(('polyline', polyline))
+
+    # Collect paths
+    for path in root.iter('{http://www.w3.org/2000/svg}path'):
+        if path.get('class', '') == 'st17':
+            routing_elements.append(('path', path))
+
+    for elem_type, elem in routing_elements:
+        if elem_type == 'polyline':
+            points_str = elem.get('points', '')
+            if not points_str:
+                continue
+
+            # Parse points: "x1,y1 x2,y2 x3,y3 ..."
+            point_pairs = points_str.strip().split()
+            if len(point_pairs) < 2:
+                continue
+
+            # Extract first and last points as connection endpoints
+            try:
+                first_point = point_pairs[0].split(',')
+                last_point = point_pairs[-1].split(',')
+
+                start_x, start_y = float(first_point[0]), float(first_point[1])
+                end_x, end_y = float(last_point[0]), float(last_point[1])
+            except (ValueError, IndexError):
+                continue
+
+        else:  # path element
+            d_attr = elem.get('d', '')
+            if not d_attr:
+                continue
+
+            # Parse path d attribute: M977.9,384.4c-29.2,0,-191.9,0,-217.4,0...
+            # Extract start point from M command
+            m_match = re.match(r'M([\d.]+),([\d.]+)', d_attr)
+            if not m_match:
+                continue
+
+            start_x, start_y = float(m_match.group(1)), float(m_match.group(2))
+
+            # For horizontal paths, estimate end point from movements
+            # This is simplified - actual SVG path parsing is complex
+            # For now, just use start point and look for connections nearby
+            end_x, end_y = start_x, start_y  # Will be updated by searching nearby points
+
+
+        # For path elements (horizontal), we need to find 2 nearest connection points
+        if elem_type == 'path':
+            # Find two nearest connection points on either side of the start point
+            all_nearby = []
+            import math
+            for elem2 in text_elements:
+                if elem2['content'].isdigit() or is_splice_point(elem2['content']) or is_connector_id(elem2['content']):
+                    dist = math.sqrt((elem2['x'] - start_x)**2 + (elem2['y'] - start_y)**2)
+                    if dist < 150:  # Within 150 units
+                        all_nearby.append((dist, elem2))
+
+            all_nearby.sort(key=lambda x: x[0])
+
+            if len(all_nearby) >= 2:
+                # Get the two closest points
+                point1 = find_nearest_connection_point(all_nearby[0][1]['x'], all_nearby[0][1]['y'], text_elements, max_distance=10)
+                point2 = find_nearest_connection_point(all_nearby[1][1]['x'], all_nearby[1][1]['y'], text_elements, max_distance=10)
+
+                if point1 and point2:
+                    source_endpoint = point1 if point1[2] < point2[2] else point2  # leftmost is source
+                    dest_endpoint = point2 if point1[2] < point2[2] else point1
+                else:
+                    source_endpoint, dest_endpoint = None, None
+            else:
+                source_endpoint, dest_endpoint = None, None
+
+        else:  # polyline element
+            # Find nearest connection points to both endpoints first
+            endpoint1 = find_nearest_connection_point(start_x, start_y, text_elements, max_distance=100)
+            endpoint2 = find_nearest_connection_point(end_x, end_y, text_elements, max_distance=100)
+
+            if not endpoint1 or not endpoint2:
+                source_endpoint, dest_endpoint = None, None
+            else:
+                ep1_is_splice = is_splice_point(endpoint1[0])
+                ep2_is_splice = is_splice_point(endpoint2[0])
+
+                # Check if this is a multi-segment polyline where both endpoints are pins
+                # and there's a splice point in the middle
+                if len(point_pairs) > 2 and not ep1_is_splice and not ep2_is_splice:
+                    # Check intermediate points for splice points
+                    splice_found = None
+                    for i in range(1, len(point_pairs) - 1):  # Skip first and last
+                        try:
+                            point = point_pairs[i].split(',')
+                            px, py = float(point[0]), float(point[1])
+                            intermediate = find_nearest_connection_point(px, py, text_elements, max_distance=100)
+                            if intermediate and is_splice_point(intermediate[0]):
+                                splice_found = intermediate
+                                break
+                        except (ValueError, IndexError):
+                            continue
+
+                    # If we found a splice in the middle, create TWO connections
+                    if splice_found:
+                        # Connection 1: endpoint1 -> splice
+                        connection1 = Connection(
+                            from_id=endpoint1[0],
+                            from_pin=endpoint1[1],
+                            to_id=splice_found[0],
+                            to_pin=splice_found[1],
+                            wire_dm='',
+                            wire_color=''
+                        )
+                        vertical_connections.append(connection1)
+
+                        # Connection 2: endpoint2 -> splice
+                        connection2 = Connection(
+                            from_id=endpoint2[0],
+                            from_pin=endpoint2[1],
+                            to_id=splice_found[0],
+                            to_pin=splice_found[1],
+                            wire_dm='',
+                            wire_color=''
+                        )
+                        vertical_connections.append(connection2)
+
+                        # Skip the normal single-connection logic below
+                        source_endpoint, dest_endpoint = None, None
+                        continue
+
+                # Normal case: determine direction
+                if ep1_is_splice and not ep2_is_splice:
+                    # endpoint1 is splice (destination), endpoint2 is pin (source)
+                    source_endpoint = endpoint2
+                    dest_endpoint = endpoint1
+                elif ep2_is_splice and not ep1_is_splice:
+                    # endpoint2 is splice (destination), endpoint1 is pin (source)
+                    source_endpoint = endpoint1
+                    dest_endpoint = endpoint2
+                else:
+                    # Both or neither are splices - use Y coordinate (lower Y = higher up = destination)
+                    if start_y > end_y:
+                        # Start is below (source), end is above (destination)
+                        source_endpoint = endpoint1
+                        dest_endpoint = endpoint2
+                    else:
+                        # End is below (source), start is above (destination)
+                        source_endpoint = endpoint2
+                        dest_endpoint = endpoint1
+
+        if source_endpoint and dest_endpoint:
+            from_id, from_pin, _, _ = source_endpoint
+            to_id, to_pin, _, _ = dest_endpoint
+
+            # For vertical routing, we don't have wire spec on the path
+            # Use empty wire spec for now (or we could look for nearby wire specs)
+            connection = Connection(
+                from_id=from_id,
+                from_pin=from_pin,
+                to_id=to_id,
+                to_pin=to_pin,
+                wire_dm='',  # Vertical routes don't have inline wire specs
+                wire_color=''
+            )
+            vertical_connections.append(connection)
+
+    return vertical_connections
+
+
 if __name__ == '__main__':
     svg_file = 'sample-wire.svg'
 
@@ -411,9 +639,38 @@ if __name__ == '__main__':
     print("Circuit Diagram Connection Extractor V3 (Wire-Centric)")
     print("=" * 80)
 
+    # Extract horizontal wire connections
     connections = extract_all_connections(svg_file)
+    print(f"\nExtracted {len(connections)} horizontal wire connections")
 
-    print(f"\nExtracted {len(connections)} total connections")
+    # Extract vertical routing connections
+    print("\n" + "=" * 80)
+    print("Extracting Vertical Routing (class='st17' polylines/paths)")
+    print("=" * 80)
+
+    # Get text elements for vertical routing (reuse parse logic)
+    from xml.etree import ElementTree as ET2
+    tree = ET2.parse(svg_file)
+    root = tree.getroot()
+    text_elements_for_vertical = []
+    for text in root.iter('{http://www.w3.org/2000/svg}text'):
+        transform = text.get('transform', '')
+        content = text.text or ''
+        match = re.search(r'matrix\([^)]*\s+([\d.]+)\s+([\d.]+)\)', transform)
+        if match:
+            x, y = float(match.group(1)), float(match.group(2))
+            text_elements_for_vertical.append({'x': x, 'y': y, 'content': content.strip()})
+
+    vertical_connections = extract_vertical_routing_connections(svg_file, text_elements_for_vertical)
+
+    print(f"\nExtracted {len(vertical_connections)} vertical routing connections")
+
+    # MERGE vertical connections into main connections list
+    connections.extend(vertical_connections)
+
+    print(f"\n" + "=" * 80)
+    print(f"Total connections: {len(connections)} (horizontal + vertical)")
+    print("=" * 80)
 
     # Filter for MH3202C
     mh3202c_connections = [c for c in connections if c.from_id == 'MH3202C']

@@ -1,11 +1,12 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 48
+**Total Connections:** 53
 
 ## All Connections (Sorted by From Connector)
 
 | From | From Pin | To | To Pin | Wire DM | Color |
 |------|----------|-----|--------|---------|-------|
+| FL2FTL | 8 | SP023 |  |  |  |
 | FL2MH | 1 | FL7210 | 4 | 0.35 | GY/PU |
 | FL2MH | 2 | FL7210 | 6 | 0.35 | BK/GN |
 | FL2MH | 3 | FL7210 | 8 | 0.35 | BK |
@@ -25,6 +26,10 @@
 | FL2MH | 57 | FL7210B | 2 | 0.75 | GN/RD |
 | FL2MH | 71 | FL2FTL | 20 | 0.35 | GY/YE |
 | FL7210 | 7 | SP025 |  | 0.35 | BK |
+| FL7210B | 3 | SP025 |  |  |  |
+| FL7611 | 1 | SP025 |  |  |  |
+| FL7611 | 5 | SP025 |  |  |  |
+| FL7611 | 9 | SP025 |  |  |  |
 | FTL2FL | 16 | FTL5651 | 3 | 0.35 | GN/BK |
 | FTL2FL | 20 | SP077 |  | 0.35 | GY/YE |
 | FTL5651 | 2 | SP120 |  | 0.35 | BK |
@@ -57,6 +62,12 @@
 
 ## Connections Grouped by Source Connector
 
+### FL2FTL (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 8 | SP023 |  |  |  |
+
 ### FL2MH (18 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
@@ -85,6 +96,20 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 7 | SP025 |  | 0.35 | BK |
+
+### FL7210B (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 3 | SP025 |  |  |  |
+
+### FL7611 (3 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 1 | SP025 |  |  |  |
+| 5 | SP025 |  |  |  |
+| 9 | SP025 |  |  |  |
 
 ### FTL2FL (2 connections)
 
