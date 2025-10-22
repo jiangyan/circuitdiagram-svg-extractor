@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 53
+**Total Connections:** 54
 
 ## All Connections (Sorted by From Connector)
 
@@ -33,6 +33,7 @@
 | FTL2FL | 16 | FTL5651 | 3 | 0.35 | GN/BK |
 | FTL2FL | 20 | SP077 |  | 0.35 | GY/YE |
 | FTL5651 | 2 | SP120 |  | 0.35 | BK |
+| MH2FL | 73 | G22B(m) |  |  |  |
 | MH3202C | 25 | FL2MH | 8 | 0.35 | WH/RD |
 | MH3202C | 26 | FL2MH | 9 | 0.35 | BU/BK |
 | MH3202C | 36 | FL2MH | 4 | 0.35 | BN |
@@ -123,6 +124,12 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 2 | SP120 |  | 0.35 | BK |
+
+### MH2FL (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 73 | G22B(m) |  |  |  |
 
 ### MH3202C (6 connections)
 

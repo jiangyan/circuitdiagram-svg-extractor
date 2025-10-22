@@ -473,6 +473,7 @@ def extract_vertical_routing_connections(svg_file: str, text_elements: List[dict
             routing_elements.append(('path', path))
 
     for elem_type, elem in routing_elements:
+        # First, extract coordinates based on element type
         if elem_type == 'polyline':
             points_str = elem.get('points', '')
             if not points_str:
@@ -493,125 +494,202 @@ def extract_vertical_routing_connections(svg_file: str, text_elements: List[dict
             except (ValueError, IndexError):
                 continue
 
-        else:  # path element
+        elif elem_type == 'path':  # path element - horizontal routing (like MH2FL → G22B(m))
             d_attr = elem.get('d', '')
             if not d_attr:
                 continue
 
-            # Parse path d attribute: M977.9,384.4c-29.2,0,-191.9,0,-217.4,0...
-            # Extract start point from M command
+            # Parse path d attribute to get start point
             m_match = re.match(r'M([\d.]+),([\d.]+)', d_attr)
             if not m_match:
                 continue
 
-            start_x, start_y = float(m_match.group(1)), float(m_match.group(2))
+            path_start_x, path_start_y = float(m_match.group(1)), float(m_match.group(2))
 
-            # For horizontal paths, estimate end point from movements
-            # This is simplified - actual SVG path parsing is complex
-            # For now, just use start point and look for connections nearby
-            end_x, end_y = start_x, start_y  # Will be updated by searching nearby points
-
-
-        # For path elements (horizontal), we need to find 2 nearest connection points
-        if elem_type == 'path':
-            # Find two nearest connection points on either side of the start point
-            all_nearby = []
+            # st17 paths are routing ARROWHEADS, not full lines
+            # Find all connection points on the same horizontal line (±10 Y units)
+            # Then look for pairs that are reasonably far apart (indicating actual routing)
             import math
+
+            connection_points = []
             for elem2 in text_elements:
-                if elem2['content'].isdigit() or is_splice_point(elem2['content']) or is_connector_id(elem2['content']):
-                    dist = math.sqrt((elem2['x'] - start_x)**2 + (elem2['y'] - start_y)**2)
-                    if dist < 150:  # Within 150 units
-                        all_nearby.append((dist, elem2))
+                is_connection_point = (elem2['content'].isdigit() or
+                                     is_splice_point(elem2['content']) or
+                                     is_connector_id(elem2['content']))
+                if is_connection_point:
+                    y_dist = abs(elem2['y'] - path_start_y)
+                    x_dist = abs(elem2['x'] - path_start_x)
+                    # Must be on same horizontal line AND within reasonable X distance of path arrow
+                    if y_dist < 10 and x_dist < 200:  # On same horizontal line and near the path arrow
+                        if elem2['content'].isdigit():
+                            # For pins, find ALL connectors above it, not just the closest
+                            pin_x, pin_y = elem2['x'], elem2['y']
+                            connectors_above = []
 
-            all_nearby.sort(key=lambda x: x[0])
+                            for elem3 in text_elements:
+                                if is_connector_id(elem3['content']):
+                                    x_dist_to_pin = abs(elem3['x'] - pin_x)
+                                    y_dist_to_pin = pin_y - elem3['y']
 
-            if len(all_nearby) >= 2:
-                # Get the two closest points
-                point1 = find_nearest_connection_point(all_nearby[0][1]['x'], all_nearby[0][1]['y'], text_elements, max_distance=10)
-                point2 = find_nearest_connection_point(all_nearby[1][1]['x'], all_nearby[1][1]['y'], text_elements, max_distance=10)
+                                    # Connector must be above pin
+                                    is_junction = ('2FL' in elem3['content'] or 'FL2' in elem3['content'])
+                                    max_x_dist = 100 if is_junction else 50
 
-                if point1 and point2:
-                    source_endpoint = point1 if point1[2] < point2[2] else point2  # leftmost is source
-                    dest_endpoint = point2 if point1[2] < point2[2] else point1
+                                    if x_dist_to_pin < max_x_dist and y_dist_to_pin > 5:
+                                        connectors_above.append((y_dist_to_pin, elem3['content'], elem3['x'], elem3['y']))
+
+                            if connectors_above:
+                                connectors_above.sort(key=lambda c: c[0])  # Sort by Y distance
+
+                                # For ground connections, prefer the connector on the RIGHT (*2FL pattern)
+                                # because ground wires typically come from the destination side
+                                to_fl_variants = [c for c in connectors_above if c[1].endswith('2FL')]
+                                if to_fl_variants:
+                                    # Pick the *2FL variant (like MH2FL)
+                                    chosen_connector = to_fl_variants[0][1]
+                                else:
+                                    # Fall back to closest connector
+                                    chosen_connector = connectors_above[0][1]
+
+                                connection_points.append((elem2['x'], chosen_connector, elem2['content'], elem2['y']))
+                        elif is_splice_point(elem2['content']) or is_connector_id(elem2['content']):
+                            connection_points.append((elem2['x'], elem2['content'], '', elem2['y']))
+
+            # Filter out duplicate connectors (same connector, different or no pin)
+            # Keep only the instance closest to the path start
+            unique_connectors = {}
+            for x, conn_id, pin, y in connection_points:
+                dist_to_path = abs(x - path_start_x)
+                key = (conn_id, pin) if pin else conn_id
+                if key not in unique_connectors or dist_to_path < unique_connectors[key][4]:
+                    unique_connectors[key] = (x, conn_id, pin, y, dist_to_path)
+
+            # Rebuild connection_points from unique_connectors
+            connection_points = [(x, conn_id, pin, y) for x, conn_id, pin, y, _ in unique_connectors.values()]
+            connection_points.sort(key=lambda p: p[0])  # Sort by X
+
+            # Find the pair with maximum distance (likely the actual routing connection)
+            if len(connection_points) >= 2:
+                # Try to find a pair where one is a pin and one is a connector/splice
+                # or find the pair with maximum X distance
+                max_dist = 0
+                best_pair = None
+
+                for i in range(len(connection_points)):
+                    for j in range(i + 1, len(connection_points)):
+                        p1, p2 = connection_points[i], connection_points[j]
+                        dist = abs(p2[0] - p1[0])
+
+                        # Only consider pairs where one is a GROUND connector (has parentheses like G22B(m))
+                        # Skip regular splice points or normal connectors
+                        is_ground = (is_connector_id(p1[1]) and '(' in p1[1]) or (is_connector_id(p2[1]) and '(' in p2[1])
+
+                        if dist > max_dist and is_ground:
+                            max_dist = dist
+                            best_pair = (p1, p2)
+
+                if best_pair:
+                    left_point, right_point = best_pair
+                    source_endpoint = (left_point[1], left_point[2], left_point[0], left_point[3])
+                    dest_endpoint = (right_point[1], right_point[2], right_point[0], right_point[3])
                 else:
                     source_endpoint, dest_endpoint = None, None
             else:
                 source_endpoint, dest_endpoint = None, None
 
-        else:  # polyline element
-            # Find nearest connection points to both endpoints first
-            endpoint1 = find_nearest_connection_point(start_x, start_y, text_elements, max_distance=100)
-            endpoint2 = find_nearest_connection_point(end_x, end_y, text_elements, max_distance=100)
+            # For path elements, create connection and continue to next element
+            if source_endpoint and dest_endpoint:
+                from_id, from_pin, _, _ = source_endpoint
+                to_id, to_pin, _, _ = dest_endpoint
 
-            if not endpoint1 or not endpoint2:
-                source_endpoint, dest_endpoint = None, None
-            else:
-                ep1_is_splice = is_splice_point(endpoint1[0])
-                ep2_is_splice = is_splice_point(endpoint2[0])
+                connection = Connection(
+                    from_id=from_id,
+                    from_pin=from_pin,
+                    to_id=to_id,
+                    to_pin=to_pin,
+                    wire_dm='',
+                    wire_color=''
+                )
+                vertical_connections.append(connection)
+            continue
 
-                # Check if this is a multi-segment polyline where both endpoints are pins
-                # and there's a splice point in the middle
-                if len(point_pairs) > 2 and not ep1_is_splice and not ep2_is_splice:
-                    # Check intermediate points for splice points
-                    splice_found = None
-                    for i in range(1, len(point_pairs) - 1):  # Skip first and last
-                        try:
-                            point = point_pairs[i].split(',')
-                            px, py = float(point[0]), float(point[1])
-                            intermediate = find_nearest_connection_point(px, py, text_elements, max_distance=100)
-                            if intermediate and is_splice_point(intermediate[0]):
-                                splice_found = intermediate
-                                break
-                        except (ValueError, IndexError):
-                            continue
+        else:
+            continue
 
-                    # If we found a splice in the middle, create TWO connections
-                    if splice_found:
-                        # Connection 1: endpoint1 -> splice
-                        connection1 = Connection(
-                            from_id=endpoint1[0],
-                            from_pin=endpoint1[1],
-                            to_id=splice_found[0],
-                            to_pin=splice_found[1],
-                            wire_dm='',
-                            wire_color=''
-                        )
-                        vertical_connections.append(connection1)
+        # Process polyline element (this code only runs for polylines)
+        # Find nearest connection points to both endpoints first
+        endpoint1 = find_nearest_connection_point(start_x, start_y, text_elements, max_distance=100)
+        endpoint2 = find_nearest_connection_point(end_x, end_y, text_elements, max_distance=100)
 
-                        # Connection 2: endpoint2 -> splice
-                        connection2 = Connection(
-                            from_id=endpoint2[0],
-                            from_pin=endpoint2[1],
-                            to_id=splice_found[0],
-                            to_pin=splice_found[1],
-                            wire_dm='',
-                            wire_color=''
-                        )
-                        vertical_connections.append(connection2)
+        if not endpoint1 or not endpoint2:
+            source_endpoint, dest_endpoint = None, None
+        else:
+            ep1_is_splice = is_splice_point(endpoint1[0])
+            ep2_is_splice = is_splice_point(endpoint2[0])
 
-                        # Skip the normal single-connection logic below
-                        source_endpoint, dest_endpoint = None, None
+            # Check if this is a multi-segment polyline where both endpoints are pins
+            # and there's a splice point in the middle
+            if len(point_pairs) > 2 and not ep1_is_splice and not ep2_is_splice:
+                # Check intermediate points for splice points
+                splice_found = None
+                for i in range(1, len(point_pairs) - 1):  # Skip first and last
+                    try:
+                        point = point_pairs[i].split(',')
+                        px, py = float(point[0]), float(point[1])
+                        intermediate = find_nearest_connection_point(px, py, text_elements, max_distance=100)
+                        if intermediate and is_splice_point(intermediate[0]):
+                            splice_found = intermediate
+                            break
+                    except (ValueError, IndexError):
                         continue
 
-                # Normal case: determine direction
-                if ep1_is_splice and not ep2_is_splice:
-                    # endpoint1 is splice (destination), endpoint2 is pin (source)
-                    source_endpoint = endpoint2
-                    dest_endpoint = endpoint1
-                elif ep2_is_splice and not ep1_is_splice:
-                    # endpoint2 is splice (destination), endpoint1 is pin (source)
+                # If we found a splice in the middle, create TWO connections
+                if splice_found:
+                    # Connection 1: endpoint1 -> splice
+                    connection1 = Connection(
+                        from_id=endpoint1[0],
+                        from_pin=endpoint1[1],
+                        to_id=splice_found[0],
+                        to_pin=splice_found[1],
+                        wire_dm='',
+                        wire_color=''
+                    )
+                    vertical_connections.append(connection1)
+
+                    # Connection 2: endpoint2 -> splice
+                    connection2 = Connection(
+                        from_id=endpoint2[0],
+                        from_pin=endpoint2[1],
+                        to_id=splice_found[0],
+                        to_pin=splice_found[1],
+                        wire_dm='',
+                        wire_color=''
+                    )
+                    vertical_connections.append(connection2)
+
+                    # Skip the normal single-connection logic below
+                    source_endpoint, dest_endpoint = None, None
+                    continue
+
+            # Normal case: determine direction
+            if ep1_is_splice and not ep2_is_splice:
+                # endpoint1 is splice (destination), endpoint2 is pin (source)
+                source_endpoint = endpoint2
+                dest_endpoint = endpoint1
+            elif ep2_is_splice and not ep1_is_splice:
+                # endpoint2 is splice (destination), endpoint1 is pin (source)
+                source_endpoint = endpoint1
+                dest_endpoint = endpoint2
+            else:
+                # Both or neither are splices - use Y coordinate (lower Y = higher up = destination)
+                if start_y > end_y:
+                    # Start is below (source), end is above (destination)
                     source_endpoint = endpoint1
                     dest_endpoint = endpoint2
                 else:
-                    # Both or neither are splices - use Y coordinate (lower Y = higher up = destination)
-                    if start_y > end_y:
-                        # Start is below (source), end is above (destination)
-                        source_endpoint = endpoint1
-                        dest_endpoint = endpoint2
-                    else:
-                        # End is below (source), start is above (destination)
-                        source_endpoint = endpoint2
-                        dest_endpoint = endpoint1
+                    # End is below (source), start is above (destination)
+                    source_endpoint = endpoint2
+                    dest_endpoint = endpoint1
 
         if source_endpoint and dest_endpoint:
             from_id, from_pin, _, _ = source_endpoint
@@ -629,7 +707,16 @@ def extract_vertical_routing_connections(svg_file: str, text_elements: List[dict
             )
             vertical_connections.append(connection)
 
-    return vertical_connections
+    # Deduplicate connections (same from/to, regardless of order)
+    seen = set()
+    unique_connections = []
+    for conn in vertical_connections:
+        key = (conn.from_id, conn.from_pin, conn.to_id, conn.to_pin)
+        if key not in seen:
+            seen.add(key)
+            unique_connections.append(conn)
+
+    return unique_connections
 
 
 if __name__ == '__main__':
