@@ -244,10 +244,148 @@ Additional section groups connections by source connector with statistics:
 4. **Simple "connector above pin" lookup** - No spatial complexity
 5. **Pin-pair deduplication** - Handles overlapping wire specifications
 
+## Architecture (Refactored - Current Version)
+
+The codebase has been refactored into a modular architecture for better maintainability and extensibility:
+
+### Module Structure
+
+```
+extract_connections.py    # Main entry point
+├── models.py            # Data structures (Connection, TextElement, WireSpec, etc.)
+├── svg_parser.py        # SVG parsing utilities
+├── connector_finder.py  # Connector identification and lookup logic
+├── extractors.py        # Connection extraction classes
+│   ├── HorizontalWireExtractor
+│   ├── VerticalRoutingExtractor
+│   └── GroundConnectionExtractor
+└── output_formatter.py  # Output formatting and export
+```
+
+### Key Data Structures (models.py)
+
+```python
+@dataclass
+class Connection:
+    from_id: str
+    from_pin: str
+    to_id: str
+    to_pin: str
+    wire_dm: str
+    wire_color: str
+
+@dataclass
+class TextElement:
+    x: float
+    y: float
+    content: str
+
+@dataclass
+class WireSpec:
+    x: float
+    y: float
+    diameter: str
+    color: str
+
+class IDGenerator:
+    """For future: generates custom IDs for unnamed splice points and connectors"""
+    def get_or_create_splice_id(x: float, y: float) -> str
+    def get_or_create_connector_id(x: float, y: float) -> str
+```
+
+### SVG Parser (svg_parser.py)
+
+- `parse_text_elements()` - Extract all text with coordinates
+- `parse_splice_dots()` - Find splice point dot positions (circle paths)
+- `parse_st17_polylines()` - Extract vertical routing polylines
+- `parse_st17_paths()` - Extract ground connection paths
+- `extract_wire_specs()` - Find wire specifications (diameter, color)
+- `map_splice_positions_to_dots()` - Map SP* labels to actual dot positions
+
+### Connector Finder (connector_finder.py)
+
+Core logic for finding connectors above pins with sophisticated junction handling:
+
+```python
+def find_connector_above_pin(
+    pin_x: float,
+    pin_y: float,
+    text_elements: List[TextElement],
+    prefer_as_source: bool = False,
+    source_x: float = None
+) -> Optional[Tuple[str, float, float]]:
+    """
+    Implements:
+    - Euclidean distance sorting
+    - Junction pair detection
+    - "Between" logic: picks junction physically between source and destination
+    - Type-specific selection:
+      * MH junctions: pick closer to PIN (tightly packed)
+      * FTL junctions: pick closer to SOURCE (spread out)
+    """
+```
+
+### Extractors (extractors.py)
+
+Three specialized extraction classes:
+
+1. **HorizontalWireExtractor** - Wire-centric algorithm for horizontal wires
+   - Groups connection points by horizontal line
+   - Creates connections between ALL ADJACENT PAIRS
+   - Handles junction selection with source_x context
+
+2. **VerticalRoutingExtractor** - Processes st17 polylines
+   - Finds nearest connection points to polyline endpoints
+   - Handles multi-segment polylines with intermediate splices
+   - Deduplicates before returning
+
+3. **GroundConnectionExtractor** - Processes st17 paths
+   - Finds connection points within 120 units of path arrow
+   - Only creates connections involving ground connectors (with parentheses)
+   - Prefers *2FL junction variants
+   - Deduplicates before returning
+
+### Critical: Ground Connection Distance Threshold
+
+```python
+# Ground connections use stricter distance filtering
+if y_dist < 10 and x_dist < 120:  # 120 units, not 200
+    # Connection point is valid
+```
+
+This prevents distant splice points from being incorrectly associated with ground arrows.
+
+### Execution Flow
+
+```python
+# 1. Parse all SVG elements
+text_elements = parse_text_elements(svg_file)
+splice_dots = parse_splice_dots(svg_file)
+polylines = parse_st17_polylines(svg_file)
+paths = parse_st17_paths(svg_file)
+
+# 2. Map splice positions
+text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
+
+# 3. Extract wire specs
+wire_specs = extract_wire_specs(text_elements)
+
+# 4. Run extractors independently
+horizontal_connections = HorizontalWireExtractor(text_elements, wire_specs).extract_connections()
+vertical_connections = VerticalRoutingExtractor(polylines, text_elements).extract_connections()
+ground_connections = GroundConnectionExtractor(paths, text_elements).extract_connections()
+
+# 5. Combine (no global deduplication - each extractor deduplicates internally)
+all_connections = horizontal_connections + vertical_connections + ground_connections
+
+# 6. Export
+export_to_file(all_connections, output_file)
+```
+
 ## Usage
 
 ```bash
-python extract_connections_v3.py
+python extract_connections.py
 ```
 
 **Input:** `sample-wire.svg` (Adobe Illustrator SVG export)
@@ -260,7 +398,12 @@ If you're an AI agent working with similar SVG files, see **[wire-relation-promp
 
 ## Key Files
 
-- `extract_connections_v3.py` - Main extraction script
+- `extract_connections.py` - Main entry point
+- `models.py` - Data structures
+- `svg_parser.py` - SVG parsing utilities
+- `connector_finder.py` - Connector identification and lookup
+- `extractors.py` - Connection extraction classes
+- `output_formatter.py` - Output formatting
 - `sample-wire.svg` - Example circuit diagram
 - `connections_output.md` - Generated connection table
 - `diagram.png` - Visual reference of the circuit

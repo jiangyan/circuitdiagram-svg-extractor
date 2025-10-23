@@ -1,5 +1,18 @@
 # AI Prompt: Circuit Diagram Wire Connection Extraction
 
+## Implementation Note
+
+This project uses a **modular architecture** with separate modules for parsing, extraction, and formatting:
+- `models.py` - Data structures (Connection, TextElement, WireSpec)
+- `svg_parser.py` - SVG parsing utilities
+- `connector_finder.py` - Connector identification with sophisticated junction handling
+- `extractors.py` - Three extraction classes (Horizontal, Vertical, Ground)
+- `output_formatter.py` - Output formatting
+
+**Key Enhancement:** The `find_connector_above_pin()` function now accepts a `source_x` parameter for context-aware junction selection using "between" logic and type-specific distance calculations.
+
+Run with: `python extract_connections.py`
+
 ## Problem Statement
 
 You are tasked with extracting wire connections from a circuit diagram SVG file exported from Adobe Illustrator. The SVG contains:
