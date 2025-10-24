@@ -122,7 +122,7 @@ def main():
     all_polylines = parse_all_polylines(svg_file)
     st17_paths = parse_st17_paths(svg_file)
     st1_paths = parse_st1_paths(svg_file)
-    routing_paths = parse_routing_paths(svg_file, ['st3', 'st4'])  # L-shaped routing wires
+    routing_paths = []  # DISABLE st3/st4 L-shaped routing wires (creates duplicates of horizontal wires)
 
     print(f"Parsed {len(text_elements)} text elements")
     print(f"Parsed {len(splice_dots)} splice point dots")
