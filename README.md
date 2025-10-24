@@ -118,11 +118,12 @@ extract_connections.py    # Main entry point
 - `connector_finder.py` - Connector identification
 - `extractors.py` - Extraction classes
 - `output_formatter.py` - Output formatting
+- `test_extraction.py` - Test suite
 
 **Sample data:**
-- `sample-wire.svg` - Example circuit diagram
+- `sample-wire.svg` - Example circuit diagram (baseline test)
 - `diagram.png` - Visual reference
-- `connections_output.md` - Generated output
+- `connections_output.md` - Generated output (golden standard)
 
 **Documentation:**
 - `README.md` - This file
@@ -199,6 +200,72 @@ Breakdown:
   - Vertical routing + Ground: 6
 ```
 
+## Testing
+
+### Run Tests
+
+The project includes a comprehensive test suite to ensure extraction accuracy:
+
+```bash
+python test_extraction.py
+```
+
+**Expected output:**
+```
+Loaded golden standard: 54 connections
+================================================================================
+CIRCUIT DIAGRAM EXTRACTION TEST SUITE
+================================================================================
+Running 1 test case(s)...
+
+================================================================================
+Running: Baseline: sample-wire.svg
+================================================================================
+✓ PASS: All connections match!
+
+================================================================================
+TEST SUMMARY
+================================================================================
+Total:  1
+Passed: 1 ✓
+Failed: 0 ✗
+
+🎉 ALL TESTS PASSED!
+```
+
+### Golden Standard
+
+The baseline test uses:
+- **Input:** `sample-wire.svg`
+- **Expected:** 54 connections from `connections_output.md`
+- **Validates:** All connection extraction logic (horizontal, vertical, ground)
+
+### Adding New Test Cases
+
+When working with edge cases, add new test cases to `test_extraction.py`:
+
+```python
+# Create test case
+new_test = TestCase(
+    name="Edge Case: Unnamed Splice Points",
+    svg_file="test_cases/unnamed_splices.svg",
+    expected_connections=[
+        ('MH3202C', '25', 'SP_CUSTOM_001', '', '0.35', 'WH/RD'),
+        # ... more expected connections
+    ]
+)
+
+# Add to tester
+tester.add_test_case(new_test)
+```
+
+### Why Testing Matters
+
+✓ **Prevents regressions** - Ensures new features don't break existing extraction
+✓ **Documents expected behavior** - Golden standards serve as specifications
+✓ **Enables confident refactoring** - Change internals without fear
+✓ **Validates edge cases** - Each new diagram becomes a permanent test
+
 ## Future Enhancements
 
 The modular architecture is ready for:
@@ -209,6 +276,7 @@ The modular architecture is ready for:
 - **Validation** against physical connector pin counts
 - **Multi-file processing** - Batch extraction from multiple SVG files
 - **Configuration** - Adjustable thresholds via config file
+- **Edge case test suite** - Growing collection of validated test cases
 
 ## License
 

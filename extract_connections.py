@@ -3,13 +3,24 @@ Circuit Diagram Connection Extractor
 
 Modular architecture for extracting wire connections from Adobe Illustrator SVG files.
 """
+import sys
+import json
+import os
+from typing import Set, Tuple
+from models import IDGenerator
 from svg_parser import (
     parse_text_elements,
     parse_splice_dots,
     parse_st17_polylines,
+    parse_all_polylines,
     parse_st17_paths,
+    parse_st1_paths,
+    parse_routing_paths,
+    extract_path_endpoints,
+    extract_path_all_points,
     extract_wire_specs,
-    map_splice_positions_to_dots
+    map_splice_positions_to_dots,
+    generate_ids_for_unlabeled_splices
 )
 from extractors import (
     HorizontalWireExtractor,
@@ -20,29 +31,112 @@ from extractors import (
 from output_formatter import export_to_file, print_summary_statistics
 
 
+def load_exclusions(config_file: str = 'exclusions_config.json') -> Set[Tuple[str, str]]:
+    """
+    Load optional exclusion configuration for reference-only pins.
+
+    Args:
+        config_file: Path to exclusions JSON config file
+
+    Returns:
+        Set of (connector_id, pin) tuples to exclude
+    """
+    if not os.path.exists(config_file):
+        return set()
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        exclusions = set()
+        for item in config.get('exclusions', []):
+            connector_id = item.get('connector_id', '')
+            pin = item.get('pin', '')
+            if connector_id:  # Pin can be empty for splice points
+                exclusions.add((connector_id, pin))
+
+        if exclusions:
+            print(f"Loaded {len(exclusions)} pin exclusions from {config_file}")
+
+        return exclusions
+    except Exception as e:
+        print(f"Warning: Could not load exclusions config: {e}")
+        return set()
+
+
+def apply_exclusions(connections, exclusions: Set[Tuple[str, str]]):
+    """
+    Filter out connections involving excluded pins.
+
+    Args:
+        connections: List of Connection objects
+        exclusions: Set of (connector_id, pin) tuples to exclude
+
+    Returns:
+        Filtered list of connections
+    """
+    if not exclusions:
+        return connections
+
+    filtered = []
+    excluded_count = 0
+
+    for conn in connections:
+        # Check if either endpoint is in exclusion list
+        from_key = (conn.from_id, conn.from_pin)
+        to_key = (conn.to_id, conn.to_pin)
+
+        if from_key in exclusions or to_key in exclusions:
+            excluded_count += 1
+            continue
+
+        filtered.append(conn)
+
+    if excluded_count > 0:
+        print(f"Excluded {excluded_count} connections involving reference-only pins")
+
+    return filtered
+
+
 def main():
     """Main entry point for connection extraction."""
-    svg_file = 'sample-wire.svg'
-    output_file = 'connections_output.md'
+    # Allow command-line override: python extract_connections.py [input.svg] [output.md]
+    svg_file = sys.argv[1] if len(sys.argv) > 1 else 'sample-wire.svg'
+    output_file = sys.argv[2] if len(sys.argv) > 2 else 'connections_output.md'
 
     print("=" * 80)
     print("Circuit Diagram Connection Extractor")
     print("=" * 80)
 
+    # Load optional exclusions for reference-only pins
+    exclusions = load_exclusions()
+
+    # Initialize ID generator for unlabeled splice points
+    id_generator = IDGenerator()
+
     # Step 1: Parse SVG elements
     print("Parsing SVG file...")
     text_elements = parse_text_elements(svg_file)
     splice_dots = parse_splice_dots(svg_file)
-    polylines = parse_st17_polylines(svg_file)
-    paths = parse_st17_paths(svg_file)
+    st17_polylines = parse_st17_polylines(svg_file)
+    all_polylines = parse_all_polylines(svg_file)
+    st17_paths = parse_st17_paths(svg_file)
+    st1_paths = parse_st1_paths(svg_file)
+    routing_paths = parse_routing_paths(svg_file, ['st3', 'st4'])  # L-shaped routing wires
 
     print(f"Parsed {len(text_elements)} text elements")
     print(f"Parsed {len(splice_dots)} splice point dots")
-    print(f"Found {len(polylines)} st17 polyline elements")
-    print(f"Found {len(paths)} st17 path elements")
+    print(f"Found {len(st17_polylines)} st17 polyline elements")
+    print(f"Found {len(all_polylines)} total polyline elements (including routing)")
+    print(f"Found {len(st17_paths)} st17 path elements (ground arrows)")
+    print(f"Found {len(st1_paths)} st1 path elements (white routing wires)")
+    print(f"Found {len(routing_paths)} st3/st4 path elements (L-shaped routing wires)")
 
     # Step 2: Map splice positions to dots
     text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
+
+    # Step 2b: Generate IDs for unlabeled splice points
+    text_elements = generate_ids_for_unlabeled_splices(text_elements, splice_dots, id_generator)
 
     # Step 3: Extract wire specifications
     wire_specs = extract_wire_specs(text_elements)
@@ -56,27 +150,36 @@ def main():
     horizontal_connections = horizontal_extractor.extract_connections()
     print(f"Extracted {len(horizontal_connections)} horizontal wire connections")
 
-    # Step 5: Extract vertical routing connections
+    # Step 5: Extract routing connections from polylines and routing paths (st1, st3, st4)
     print("\n" + "=" * 80)
-    print("Extracting Vertical Routing (st17 polylines)")
+    print("Extracting Routing Connections (polylines + routing paths)")
     print("=" * 80)
-    vertical_extractor = VerticalRoutingExtractor(polylines, text_elements)
-    vertical_connections = vertical_extractor.extract_connections()
-    print(f"Extracted {len(vertical_connections)} vertical routing connections")
+    # Combine st1 and st3/st4 paths
+    all_routing_paths = st1_paths + routing_paths
+    routing_extractor = VerticalRoutingExtractor(all_polylines, all_routing_paths, text_elements)
+    routing_connections = routing_extractor.extract_connections()
+    print(f"Extracted {len(routing_connections)} routing connections (polylines + routing paths)")
 
     # Step 6: Extract ground connections
     print("\n" + "=" * 80)
     print("Extracting Ground Connections (st17 paths)")
     print("=" * 80)
-    ground_extractor = GroundConnectionExtractor(paths, text_elements)
+    ground_extractor = GroundConnectionExtractor(st17_paths, text_elements, horizontal_connections)
     ground_connections = ground_extractor.extract_connections()
     print(f"Extracted {len(ground_connections)} ground connections")
 
-    # Step 7: Combine all connections
-    all_connections = horizontal_connections + vertical_connections + ground_connections
+    # Step 7: Combine all connections and deduplicate globally
+    # (Each extractor deduplicates internally, but we need global dedup across extractors)
+    combined = horizontal_connections + routing_connections + ground_connections
+    all_connections = deduplicate_connections(combined)
+
+    # Step 7b: Apply exclusions for reference-only pins
+    all_connections = apply_exclusions(all_connections, exclusions)
 
     print("\n" + "=" * 80)
     print(f"Total connections: {len(all_connections)}")
+    if len(combined) > len(all_connections):
+        print(f"  (Removed {len(combined) - len(all_connections)} duplicates across extractors)")
     print("=" * 80)
 
     # Step 8: Export to file
@@ -84,11 +187,11 @@ def main():
 
     # Print summary by type
     horizontal = [c for c in all_connections if c.wire_dm]
-    vertical_and_ground = [c for c in all_connections if not c.wire_dm]
+    routing_and_ground = [c for c in all_connections if not c.wire_dm]
 
     print(f"\nBreakdown:")
     print(f"  - Horizontal wires (with specs): {len(horizontal)}")
-    print(f"  - Vertical routing + Ground: {len(vertical_and_ground)}")
+    print(f"  - Routing + Ground: {len(routing_and_ground)}")
 
 
 if __name__ == '__main__':

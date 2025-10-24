@@ -17,13 +17,18 @@ def is_connector_id(text: str) -> bool:
     Returns:
         True if text matches connector ID pattern
     """
-    if text.startswith('SP'):  # Exclude splices
+    # Exclude both labeled (SP001) and custom (SP_CUSTOM_001) splices
+    if text.startswith('SP'):
+        return False
+    # Exclude GND labels (GND, GND1, GND2, etc.) - these are descriptions, not connectors
+    if re.match(r'^GND\d*$', text):
         return False
     # Standard connector pattern: MH3202C, FL7210, MH2FL
     if re.match(r'^[A-Z]{2,3}\d{1,5}[A-Z]{0,3}$', text):
         return True
-    # Ground point pattern: G22B(m), G05(z), etc.
-    if re.match(r'^[A-Z]+\d+[A-Z]*\([a-z]\)$', text):
+    # Ground point pattern: G22B(m), G05(z), G22_B(m), etc.
+    # Allow underscores between letters
+    if re.match(r'^[A-Z_]+\d+[A-Z_]*\([a-z]\)$', text):
         return True
     return False
 
@@ -32,13 +37,22 @@ def is_splice_point(text: str) -> bool:
     """
     Check if text is a splice point ID.
 
+    Matches both labeled splice points (SP001, SP023) and
+    custom-generated IDs for unlabeled splices (SP_CUSTOM_001).
+
     Args:
         text: Text to check
 
     Returns:
-        True if text matches splice point pattern (SP*)
+        True if text matches splice point pattern (SP* or SP_CUSTOM_*)
     """
-    return bool(re.match(r'^SP\d+$', text))
+    # Match SP001 format
+    if re.match(r'^SP\d+$', text):
+        return True
+    # Match SP_CUSTOM_001 format
+    if text.startswith('SP_CUSTOM_'):
+        return True
+    return False
 
 
 def is_wire_spec(text: str) -> bool:
@@ -129,6 +143,37 @@ def find_connector_above_pin(
 
     # Sort by Euclidean distance
     connectors_with_distance.sort(key=lambda c: c[0])
+
+    # CRITICAL: If source_x is provided, prefer connectors BETWEEN source and pin
+    # This handles shared pins where multiple connectors are above the same pin
+    if source_x is not None and not prefer_as_source:
+        # Separate connectors into "between" and "not between"
+        between_connectors = []
+        other_connectors = []
+
+        for conn in connectors_with_distance:
+            eucl_dist, y_dist, x_dist, cid, cx, cy = conn
+
+            # Check if connector is between source_x and pin_x
+            if source_x < pin_x:
+                # Wire goes left to right
+                is_between = source_x < cx < pin_x
+            else:
+                # Wire goes right to left
+                is_between = pin_x < cx < source_x
+
+            # CRITICAL: Only prioritize "between" connectors if they're reasonably close in Y
+            # This prevents distant connectors from being selected just because they're between in X
+            # Use a threshold of 50 Y-units as "reasonable" vertical distance
+            if is_between and y_dist < 50:
+                between_connectors.append(conn)
+            else:
+                other_connectors.append(conn)
+
+        # If we have connectors between, prioritize them
+        if between_connectors:
+            # Use between connectors, sorted by closeness to pin
+            connectors_with_distance = between_connectors + other_connectors
 
     # Check for junction pairs (mirrored connectors like FL2MH/MH2FL, FTL2FL/FL2FTL)
     has_junction_pair = False
@@ -268,8 +313,9 @@ def find_nearest_connection_point(
     min_distance = float('inf')
 
     for elem in text_elements:
-        # Check for pin numbers (digits) or splice points (SP*)
-        if elem.content.isdigit() or is_splice_point(elem.content):
+        # Check for pin numbers (digits), splice points (SP*), or ground connectors
+        is_ground = is_connector_id(elem.content) and '(' in elem.content
+        if elem.content.isdigit() or is_splice_point(elem.content) or is_ground:
             dist = math.sqrt((elem.x - target_x)**2 + (elem.y - target_y)**2)
 
             if dist < max_distance and dist < min_distance:
@@ -277,6 +323,9 @@ def find_nearest_connection_point(
 
                 if is_splice_point(elem.content):
                     # It's a splice point
+                    nearest = ConnectionPoint(elem.content, '', elem.x, elem.y)
+                elif is_ground:
+                    # It's a ground connector
                     nearest = ConnectionPoint(elem.content, '', elem.x, elem.y)
                 else:
                     # It's a pin number - find the connector above it

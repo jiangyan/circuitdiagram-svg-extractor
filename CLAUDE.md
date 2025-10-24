@@ -114,6 +114,147 @@ if pin_pair_key not in seen_pin_pairs:
     seen_pin_pairs.add(pin_pair_key)
 ```
 
+### 5. Unlabeled Splice Point Handling
+
+**Edge Case:** Some diagrams contain splice point dots without accompanying labels (no SP001, SP023, etc.).
+
+**Solution:** Automatically generate custom IDs for unlabeled splice dots.
+
+**Implementation:**
+
+```python
+from models import IDGenerator
+
+# 1. Initialize ID generator
+id_generator = IDGenerator()
+
+# 2. After mapping labeled splices to dots, identify unlabeled dots
+text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
+text_elements = generate_ids_for_unlabeled_splices(text_elements, splice_dots, id_generator)
+
+# 3. IDGenerator creates unique IDs: SP_CUSTOM_001, SP_CUSTOM_002, ...
+```
+
+**Detection Logic:**
+
+```python
+def generate_ids_for_unlabeled_splices(text_elements, dots, id_generator, max_distance=5):
+    """Generate custom IDs for splice dots that don't have labels."""
+
+    # Collect positions of all labeled splices
+    labeled_positions = [(elem.x, elem.y) for elem in text_elements if is_splice_point(elem.content)]
+
+    # Find dots without nearby labels (within 5 units)
+    unlabeled_dots = []
+    for dot_x, dot_y in dots:
+        has_label = any(
+            math.sqrt((dot_x - lx)**2 + (dot_y - ly)**2) < max_distance
+            for lx, ly in labeled_positions
+        )
+        if not has_label:
+            unlabeled_dots.append((dot_x, dot_y))
+
+    # Generate custom IDs
+    for dot_x, dot_y in unlabeled_dots:
+        custom_id = id_generator.get_or_create_splice_id(dot_x, dot_y)
+        text_elements.append(TextElement(custom_id, dot_x, dot_y))
+
+    return text_elements
+```
+
+**Recognition:**
+
+Custom splice IDs are recognized by `is_splice_point()`:
+
+```python
+def is_splice_point(text: str) -> bool:
+    """Check if text is a splice point ID (SP001 or SP_CUSTOM_001)."""
+    if re.match(r'^SP\d+$', text):  # Labeled: SP001
+        return True
+    if text.startswith('SP_CUSTOM_'):  # Custom: SP_CUSTOM_001
+        return True
+    return False
+```
+
+**Example:**
+
+Edge case file: `test_cases/splicepoints-has-no-id.svg`
+- Circuit diagram with 37 unique connectors
+- Only 9 unlabeled splice dots (out of 12 total dots)
+- Generated 9 custom IDs (SP_CUSTOM_001 to SP_CUSTOM_009)
+- Result: 87 connections
+
+**Why This Matters:**
+
+- Some circuit diagrams omit splice point labels to reduce clutter
+- Without auto-generation, connections to unlabeled splices would be lost
+- Custom IDs ensure complete extraction while maintaining traceability
+
+### 6. Shared Pin Connector Selection ("Between" Logic)
+
+**Edge Case:** Multiple connectors positioned above the same physical pin.
+
+**Problem:**
+```
+Wire: MH097 pin 7 ---[2.5,YE/BU]---> pin 1
+Connectors above pin 1:
+  - MH020 at X=317.8 (LEFT of pin, at end of yellow wire)
+  - RRS100 at X=343.1 (RIGHT of pin, at start of red wire)
+```
+
+Without proper logic, algorithm picks **RRS100** (closest to pin, only 0.7 units away) instead of **MH020** (24.6 units away).
+
+**Solution:** Prefer connectors **BETWEEN** wire spec and pin.
+
+**Implementation:**
+
+```python
+def find_connector_above_pin(pin_x, pin_y, text_elements, prefer_as_source=False, source_x=None):
+    """Find connector above pin, preferring those between source and pin."""
+
+    # ... find all connectors above pin ...
+
+    # CRITICAL: If source_x provided, prefer connectors BETWEEN source and pin
+    if source_x is not None and not prefer_as_source:
+        between_connectors = []
+        other_connectors = []
+
+        for conn in connectors_with_distance:
+            cx = conn[4]  # connector X position
+
+            # Check if connector is between source_x and pin_x
+            if source_x < pin_x:
+                is_between = source_x < cx < pin_x
+            else:
+                is_between = pin_x < cx < source_x
+
+            if is_between:
+                between_connectors.append(conn)
+            else:
+                other_connectors.append(conn)
+
+        # Prioritize connectors between source and pin
+        if between_connectors:
+            connectors_with_distance = between_connectors + other_connectors
+
+    # Return closest connector (now prioritizing "between" connectors)
+    return connectors_with_distance[0]
+```
+
+**Example:**
+
+Wire spec at X=243.9, pin at X=342.4:
+- MH020 at X=317.8 → **BETWEEN** (243.9 < 317.8 < 342.4) ✓
+- RRS100 at X=343.1 → **NOT BETWEEN** (343.1 > 342.4) ✗
+
+Result: **MH020** is chosen (correct!)
+
+**Why This Matters:**
+
+- Shared pins are common at connector boundaries
+- Picking the wrong connector breaks wire tracing
+- "Between" logic ensures we follow the physical wire path
+
 ## SVG Structure Patterns
 
 ### Text Element Format
@@ -301,6 +442,7 @@ class IDGenerator:
 - `parse_st17_paths()` - Extract ground connection paths
 - `extract_wire_specs()` - Find wire specifications (diameter, color)
 - `map_splice_positions_to_dots()` - Map SP* labels to actual dot positions
+- `generate_ids_for_unlabeled_splices()` - Generate custom IDs (SP_CUSTOM_*) for dots without labels
 
 ### Connector Finder (connector_finder.py)
 
@@ -358,6 +500,9 @@ This prevents distant splice points from being incorrectly associated with groun
 ### Execution Flow
 
 ```python
+# 0. Initialize ID generator for unlabeled splice points
+id_generator = IDGenerator()
+
 # 1. Parse all SVG elements
 text_elements = parse_text_elements(svg_file)
 splice_dots = parse_splice_dots(svg_file)
@@ -366,6 +511,9 @@ paths = parse_st17_paths(svg_file)
 
 # 2. Map splice positions
 text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
+
+# 2b. Generate custom IDs for unlabeled splice dots
+text_elements = generate_ids_for_unlabeled_splices(text_elements, splice_dots, id_generator)
 
 # 3. Extract wire specs
 wire_specs = extract_wire_specs(text_elements)
@@ -540,6 +688,76 @@ if to_fl_variants:
 - 1 ground path connection
 - **Total: 54 connections**
 
+## Optional Exclusion Configuration
+
+### Reference-Only Pins
+
+Some circuit diagrams contain reference sections showing connector pins that point to external diagrams. These pins should not create connections within the current diagram.
+
+**Solution:** Create an optional `exclusions_config.json` file to specify pins to exclude:
+
+```json
+{
+  "description": "Optional exclusion configuration for reference-only pins",
+  "exclusions": [
+    {
+      "connector_id": "RRS111",
+      "pin": "22",
+      "reason": "Reference connection to external diagram"
+    },
+    {
+      "connector_id": "RRS111",
+      "pin": "23",
+      "reason": "Reference connection to external diagram"
+    }
+  ],
+  "notes": [
+    "Only exclude pins that ONLY connect to text labels or external references",
+    "If a pin has valid connections to connectors/splices, keep those connections"
+  ]
+}
+```
+
+### Implementation
+
+The extractor automatically loads `exclusions_config.json` if present:
+
+```python
+# Load exclusions
+exclusions = load_exclusions('exclusions_config.json')
+
+# Apply after extraction and deduplication
+all_connections = apply_exclusions(all_connections, exclusions)
+```
+
+### Smart Filtering Logic
+
+**Key Rule:** Exclusions are applied at the connection level, not the pin level.
+
+- If a pin is in the exclusion list AND connects to a valid connector/splice → connection is excluded
+- If a pin has multiple connections, ALL connections involving that pin are excluded
+- The exclusion prevents false connections to text labels or reference sections
+
+**Example:**
+
+```
+RRS111 pin 22 → RRS114 pin 2  ❌ Excluded (RRS111,22 in exclusion list)
+RRS111 pin 23 → GND1 pin 13   ❌ Excluded (RRS111,23 in exclusion list + GND1 is a label)
+SP113 → RR622 pin 26          ✓ Kept (SP113 not in exclusion list, valid connection)
+```
+
+### When to Use Exclusions
+
+Use exclusion configuration for:
+1. **Reference sections** with arrows pointing to external diagrams
+2. **Connector detail boxes** showing internal wiring that shouldn't connect
+3. **Description labels** inside dashed connector frames (e.g., GND1, GND2)
+
+Do NOT use exclusions for:
+- Splice points that have valid connections to other connectors
+- Pins that connect to actual ground connectors (e.g., G22_B(m))
+- Any pin that has legitimate wire connections in the diagram
+
 ## Future Improvements
 
 - Support for other SVG export tools (Inkscape, AutoCAD, etc.)
@@ -547,3 +765,4 @@ if to_fl_variants:
 - Automatic detection of wire specs near vertical routing paths
 - Validation against physical connector pin counts
 - Export to CSV, JSON, or Excel formats
+- we are in windows command (windows 11 pro), we have git bash, github cli and other cli installed
