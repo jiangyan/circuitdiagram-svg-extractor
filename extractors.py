@@ -148,10 +148,19 @@ class HorizontalWireExtractor:
 class VerticalRoutingExtractor:
     """Extracts connections from vertical routing arrows (st17 polylines) and st1 path routing wires."""
 
-    def __init__(self, polylines: List[str], st1_paths: List[str], text_elements: List[TextElement]):
+    def __init__(self, polylines: List[str], st1_paths: List[str], text_elements: List[TextElement], horizontal_connections: List = None):
         self.polylines = polylines
         self.st1_paths = st1_paths
         self.text_elements = text_elements
+        self.horizontal_connections = horizontal_connections or []
+
+        # Build a set of (connector_id, pin) tuples that already have horizontal wire connections
+        # Only track PINS (not splice points), as splice points can have multiple connections
+        self.pins_with_horizontal_wires = set()
+        for conn in self.horizontal_connections:
+            # Only add if it's a real pin (has a pin number), not a splice point
+            if conn.from_pin and not is_splice_point(conn.from_id):
+                self.pins_with_horizontal_wires.add((conn.from_id, conn.from_pin))
 
     def extract_connections(self) -> List[Connection]:
         """
@@ -196,25 +205,72 @@ class VerticalRoutingExtractor:
             ep2_is_splice = is_splice_point(endpoint2.connector_id)
 
             # Check if this is a multi-segment polyline with splice in the middle
-            if len(point_pairs) > 2 and not ep1_is_splice and not ep2_is_splice:
-                # Check intermediate points for splice points
+            # Allow checking even if one endpoint is a splice (e.g., pin -> splice1 -> splice2)
+            if len(point_pairs) > 2:
+                # Strategy: Check for splices ON line segments (not just near vertices)
+                # This prevents false matches to distant splices
                 splice_found = None
-                for i in range(1, len(point_pairs) - 1):  # Skip first and last
+
+                # Parse all points first
+                parsed_points = []
+                for point_str in point_pairs:
                     try:
-                        point = point_pairs[i].split(',')
-                        px, py = float(point[0]), float(point[1])
+                        x, y = map(float, point_str.split(','))
+                        parsed_points.append((x, y))
+                    except (ValueError, IndexError):
+                        continue
+
+                # Check each line segment for splice points
+                for i in range(len(parsed_points) - 1):
+                    x1, y1 = parsed_points[i]
+                    x2, y2 = parsed_points[i + 1]
+
+                    # Check all splice points to see if any are ON this segment
+                    for elem in self.text_elements:
+                        if not is_splice_point(elem.content):
+                            continue
+
+                        sx, sy = elem.x, elem.y
+
+                        # Check if splice is on this line segment
+                        # For horizontal segments: Y within 10 units, X between endpoints
+                        # For vertical segments: X within 10 units, Y between endpoints
+                        is_on_segment = False
+
+                        if abs(y1 - y2) < 5:  # Horizontal segment
+                            if abs(sy - y1) < 10 and min(x1, x2) < sx < max(x1, x2):
+                                is_on_segment = True
+                        elif abs(x1 - x2) < 5:  # Vertical segment
+                            if abs(sx - x1) < 10 and min(y1, y2) < sy < max(y1, y2):
+                                is_on_segment = True
+
+                        if is_on_segment:
+                            splice_found = find_nearest_connection_point(sx, sy, self.text_elements, max_distance=20)
+                            if splice_found and is_splice_point(splice_found.connector_id):
+                                break
+
+                    if splice_found:
+                        break
+
+                # If no splice found on segments, check vertices (for T-junctions)
+                # But use strict distance threshold to avoid false matches
+                if not splice_found:
+                    for i in range(1, len(parsed_points) - 1):  # Skip first and last
+                        px, py = parsed_points[i]
                         intermediate = find_nearest_connection_point(px, py, self.text_elements, max_distance=100)
                         if intermediate and is_splice_point(intermediate.connector_id):
                             splice_found = intermediate
                             break
-                    except (ValueError, IndexError):
-                        continue
 
-                # If we found a splice in the middle, create TWO connections
+                # If we found a splice in the middle, create connections
+                # For a chain (ep1 -> splice -> ep2), we need:
+                #   ep1 -> splice and splice -> ep2
                 if splice_found:
-                    # Connection 1: endpoint1 -> splice (skip if self-loop)
+                    # Connection 1: endpoint1 -> splice (skip if self-loop or has horizontal wire)
+                    ep1_key = (endpoint1.connector_id, endpoint1.pin)
                     if not (endpoint1.connector_id == splice_found.connector_id and
-                            endpoint1.pin == splice_found.pin):
+                            endpoint1.pin == splice_found.pin) and \
+                       ep1_key not in self.pins_with_horizontal_wires:
                         connections.append(Connection(
                             from_id=endpoint1.connector_id,
                             from_pin=endpoint1.pin,
@@ -224,14 +280,15 @@ class VerticalRoutingExtractor:
                             wire_color=''
                         ))
 
-                    # Connection 2: endpoint2 -> splice (skip if self-loop)
+                    # Connection 2: splice -> endpoint2 (skip if self-loop)
+                    # This creates a chain: endpoint1 -> splice -> endpoint2
                     if not (endpoint2.connector_id == splice_found.connector_id and
                             endpoint2.pin == splice_found.pin):
                         connections.append(Connection(
-                            from_id=endpoint2.connector_id,
-                            from_pin=endpoint2.pin,
-                            to_id=splice_found.connector_id,
-                            to_pin=splice_found.pin,
+                            from_id=splice_found.connector_id,
+                            from_pin=splice_found.pin,
+                            to_id=endpoint2.connector_id,
+                            to_pin=endpoint2.pin,
                             wire_dm='',
                             wire_color=''
                         ))
@@ -258,6 +315,12 @@ class VerticalRoutingExtractor:
             # Skip self-loops (short polylines where both endpoints resolve to same pin)
             if (source_endpoint.connector_id == dest_endpoint.connector_id and
                 source_endpoint.pin == dest_endpoint.pin):
+                continue
+
+            # Skip if source pin already has a horizontal wire connection
+            # (Horizontal wires take precedence over routing paths)
+            source_key = (source_endpoint.connector_id, source_endpoint.pin)
+            if source_key in self.pins_with_horizontal_wires:
                 continue
 
             # Create connection

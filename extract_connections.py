@@ -156,7 +156,7 @@ def main():
     print("=" * 80)
     # Combine st1 and st3/st4 paths
     all_routing_paths = st1_paths + routing_paths
-    routing_extractor = VerticalRoutingExtractor(all_polylines, all_routing_paths, text_elements)
+    routing_extractor = VerticalRoutingExtractor(all_polylines, all_routing_paths, text_elements, horizontal_connections)
     routing_connections = routing_extractor.extract_connections()
     print(f"Extracted {len(routing_connections)} routing connections (polylines + routing paths)")
 
