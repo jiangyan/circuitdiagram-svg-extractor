@@ -6,7 +6,7 @@
 
 | From | From Pin | To | To Pin | Wire DM | Color |
 |------|----------|-----|--------|---------|-------|
-| FL2FTL | 8 | SP023 |  |  |  |
+| FL2FTL | 8 | SP023 |  | 0.35 | BK |
 | FL2MH | 1 | FL7210 | 4 | 0.35 | GY/PU |
 | FL2MH | 2 | FL7210 | 6 | 0.35 | BK/GN |
 | FL2MH | 3 | FL7210 | 8 | 0.35 | YE/BK |
@@ -26,13 +26,13 @@
 | FL2MH | 57 | FL7210B | 2 | 0.75 | GN/RD |
 | FL2MH | 71 | FL2FTL | 20 | 0.35 | GY/YE |
 | FL7210 | 7 | SP025 |  | 0.35 | BK |
-| FL7210B | 3 | SP025 |  |  |  |
-| FL7611 | 1 | SP025 |  |  |  |
-| FL7611 | 5 | SP025 |  |  |  |
+| FL7210B | 3 | SP025 |  | 0.35 | BK |
+| FL7611 | 1 | SP025 |  | 0.35 | BK |
+| FL7611 | 5 | SP025 |  | 0.35 | BK |
 | FTL2FL | 16 | FTL5651 | 3 | 0.35 | GN/BK |
 | FTL2FL | 20 | SP077 |  | 0.35 | GY/YE |
 | FTL5651 | 2 | SP120 |  | 0.35 | BK |
-| MH2FL | 73 | G22B(m) |  |  |  |
+| MH2FL | 73 | G22B(m) |  | 0.5 | BK |
 | MH3202C | 25 | FL2MH | 8 | 0.35 | WH/RD |
 | MH3202C | 26 | FL2MH | 9 | 0.35 | BU/BK |
 | MH3202C | 36 | FL2MH | 4 | 0.35 | BN |
@@ -53,7 +53,7 @@
 | MH3203D | 7 | SP092 |  | 0.35 | GY/YE |
 | SP023 |  | FL2MH | 73 | 0.75 | BN |
 | SP025 |  | SP023 |  | 0.35 | BK |
-| SP025 |  | FL7611 | 9 |  |  |
+| SP025 |  | FL7611 | 9 | 0.35 | BK |
 | SP070 |  | FL7611 | 7 | 0.35 | OG/GN |
 | SP077 |  | FTL5651 | 1 | 0.35 | GY/YE |
 | SP092 |  | SP093 |  | 0.35 | GY/YE |
@@ -67,7 +67,7 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 8 | SP023 |  |  |  |
+| 8 | SP023 |  | 0.35 | BK |
 
 ### FL2MH (18 connections)
 
@@ -102,14 +102,14 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 3 | SP025 |  |  |  |
+| 3 | SP025 |  | 0.35 | BK |
 
 ### FL7611 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 1 | SP025 |  |  |  |
-| 5 | SP025 |  |  |  |
+| 1 | SP025 |  | 0.35 | BK |
+| 5 | SP025 |  | 0.35 | BK |
 
 ### FTL2FL (2 connections)
 
@@ -128,7 +128,7 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 73 | G22B(m) |  |  |  |
+| 73 | G22B(m) |  | 0.5 | BK |
 
 ### MH3202C (6 connections)
 
@@ -189,7 +189,7 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 |  | SP023 |  | 0.35 | BK |
-|  | FL7611 | 9 |  |  |
+|  | FL7611 | 9 | 0.35 | BK |
 
 ### SP070 (1 connections)
 

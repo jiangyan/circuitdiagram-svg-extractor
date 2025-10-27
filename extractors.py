@@ -234,10 +234,11 @@ class HorizontalWireExtractor:
 class VerticalRoutingExtractor:
     """Extracts connections from vertical routing arrows (st17 polylines) and st1 path routing wires."""
 
-    def __init__(self, polylines: List[str], st1_paths: List[str], text_elements: List[TextElement], horizontal_connections: List = None):
+    def __init__(self, polylines: List[str], st1_paths: List[str], text_elements: List[TextElement], wire_specs: List = None, horizontal_connections: List = None):
         self.polylines = polylines
         self.st1_paths = st1_paths
         self.text_elements = text_elements
+        self.wire_specs = wire_specs or []
         self.horizontal_connections = horizontal_connections or []
 
         # Build a set of (connector_id, pin) tuples that already have horizontal wire connections
@@ -265,6 +266,101 @@ class VerticalRoutingExtractor:
             if splice_incoming.get(splice_id, 0) >= 1 and splice_outgoing.get(splice_id, 0) >= 1:
                 self.passthrough_splices.add(splice_id)
 
+    def _find_wire_spec_near_path(self, path_points: List[Tuple[float, float]], source_point: Tuple[float, float] = None) -> Tuple[str, str]:
+        """
+        Find the wire spec closest to a routing path.
+
+        CRITICAL: Wire specs are positioned above the INITIAL horizontal segment of the wire,
+        near where the wire originates (source). NOT scattered along the entire path!
+
+        For L-shaped or complex paths, we find the horizontal segment closest to the SOURCE endpoint.
+
+        Args:
+            path_points: List of (x, y) coordinates along the routing path
+            source_point: (x, y) coordinates of the source endpoint (where wire originates)
+
+        Returns:
+            Tuple of (diameter, color) or ('', '') if no spec found
+        """
+        if not self.wire_specs or len(path_points) < 2:
+            return ('', '')
+
+        # Find ALL horizontal segments of the path
+        horizontal_segments = []
+        for i in range(len(path_points) - 1):
+            x1, y1 = path_points[i]
+            x2, y2 = path_points[i + 1]
+
+            # Check if this segment is horizontal (Y change < 5 units)
+            if abs(y2 - y1) < 5:
+                horizontal_segments.append((i, x1, y1, x2, y2))
+
+        # If we know the source point, find the horizontal segment closest to it
+        target_segment_points = []
+        if source_point and horizontal_segments:
+            source_x, source_y = source_point
+            min_dist_to_source = float('inf')
+            closest_segment = None
+
+            for idx, x1, y1, x2, y2 in horizontal_segments:
+                # Distance from source to segment midpoint
+                mid_x, mid_y = (x1 + x2) / 2, (y1 + y2) / 2
+                dist = math.sqrt((mid_x - source_x)**2 + (mid_y - source_y)**2)
+                if dist < min_dist_to_source:
+                    min_dist_to_source = dist
+                    closest_segment = (x1, y1, x2, y2)
+
+            if closest_segment:
+                target_segment_points = [(closest_segment[0], closest_segment[1]),
+                                        (closest_segment[2], closest_segment[3])]
+
+        # Fallback: use first horizontal segment if no source point provided
+        if not target_segment_points and horizontal_segments:
+            idx, x1, y1, x2, y2 = horizontal_segments[0]
+            target_segment_points = [(x1, y1), (x2, y2)]
+
+        # Fallback: use first few points if no horizontal segments found
+        if not target_segment_points:
+            target_segment_points = path_points[:min(3, len(path_points))]
+
+        # Find the wire spec closest to the target segment
+        # CRITICAL: Only consider specs BETWEEN the segment's X endpoints
+        if len(target_segment_points) >= 2:
+            seg_x_min = min(p[0] for p in target_segment_points)
+            seg_x_max = max(p[0] for p in target_segment_points)
+        else:
+            seg_x_min, seg_x_max = None, None
+
+        min_distance = float('inf')
+        closest_spec = None
+
+        for spec in self.wire_specs:
+            # Filter: spec must be STRICTLY between segment's X endpoints
+            # (specs are positioned above the wire, not at the ends)
+            if seg_x_min is not None and seg_x_max is not None:
+                if not (seg_x_min < spec.x < seg_x_max):
+                    continue
+
+            # Check distance from spec to each point in the target segment
+            for px, py in target_segment_points:
+                x_dist = abs(spec.x - px)
+                y_dist = spec.y - py  # Negative if spec is above (lower Y)
+
+                # Only consider specs that are ABOVE the path (within 50 Y units above)
+                if -50 < y_dist < 0:  # Must be above (spec.y < path.y)
+                    # Euclidean distance, strongly prioritize specs directly above (close in Y)
+                    # Weight Y-distance MORE to prefer specs just above the wire
+                    distance = math.sqrt(x_dist**2 + (y_dist * 2.0)**2)  # Weight Y more
+
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_spec = spec
+
+        if closest_spec and min_distance < 150:  # Within 150 units
+            return (closest_spec.diameter, closest_spec.color)
+
+        return ('', '')
+
     def extract_connections(self) -> List[Connection]:
         """
         Extract all vertical routing connections.
@@ -289,6 +385,15 @@ class VerticalRoutingExtractor:
                 end_x, end_y = float(last_point[0]), float(last_point[1])
             except (ValueError, IndexError):
                 continue
+
+            # Parse all points for wire spec detection
+            path_points = []
+            for point_str in point_pairs:
+                try:
+                    x, y = map(float, point_str.split(','))
+                    path_points.append((x, y))
+                except (ValueError, IndexError):
+                    continue
 
             # Find nearest connection points to both endpoints
             endpoint1 = find_nearest_connection_point(start_x, start_y, self.text_elements, max_distance=100)
@@ -369,6 +474,9 @@ class VerticalRoutingExtractor:
                 # For a chain (ep1 -> splice -> ep2), we need:
                 #   ep1 -> splice and splice -> ep2
                 if splice_found:
+                    # For multi-segment paths, source is endpoint1 (first point)
+                    wire_dm, wire_color = self._find_wire_spec_near_path(path_points, (start_x, start_y))
+
                     # Connection 1: endpoint1 -> splice (skip if self-loop or has horizontal wire)
                     ep1_key = (endpoint1.connector_id, endpoint1.pin)
                     if not (endpoint1.connector_id == splice_found.connector_id and
@@ -382,8 +490,8 @@ class VerticalRoutingExtractor:
                                 from_pin=endpoint1.pin,
                                 to_id=splice_found.connector_id,
                                 to_pin=splice_found.pin,
-                                wire_dm='',
-                                wire_color=''
+                                wire_dm=wire_dm,
+                                wire_color=wire_color
                             ))
 
                     # Connection 2: splice -> endpoint2 (skip if self-loop)
@@ -398,8 +506,8 @@ class VerticalRoutingExtractor:
                                 from_pin=splice_found.pin,
                                 to_id=endpoint2.connector_id,
                                 to_pin=endpoint2.pin,
-                                wire_dm='',
-                                wire_color=''
+                                wire_dm=wire_dm,
+                                wire_color=wire_color
                             ))
                     continue
 
@@ -408,18 +516,25 @@ class VerticalRoutingExtractor:
             if ep1_is_splice and not ep2_is_splice:
                 source_endpoint = endpoint2
                 dest_endpoint = endpoint1
+                source_point = (end_x, end_y)
             elif ep2_is_splice and not ep1_is_splice:
                 source_endpoint = endpoint1
                 dest_endpoint = endpoint2
+                source_point = (start_x, start_y)
             else:
                 # Neither or both are splices - use Y coordinate
                 # Lower Y value = higher up = destination
                 if start_y > end_y:
                     source_endpoint = endpoint1
                     dest_endpoint = endpoint2
+                    source_point = (start_x, start_y)
                 else:
                     source_endpoint = endpoint2
                     dest_endpoint = endpoint1
+                    source_point = (end_x, end_y)
+
+            # Now find wire spec near this routing path, using the SOURCE point
+            wire_dm, wire_color = self._find_wire_spec_near_path(path_points, source_point)
 
             # Skip self-loops (short polylines where both endpoints resolve to same pin)
             if (source_endpoint.connector_id == dest_endpoint.connector_id and
@@ -445,8 +560,8 @@ class VerticalRoutingExtractor:
                 from_pin=source_endpoint.pin,
                 to_id=dest_endpoint.connector_id,
                 to_pin=dest_endpoint.pin,
-                wire_dm='',
-                wire_color=''
+                wire_dm=wire_dm,
+                wire_color=wire_color
             ))
 
         # Process st1 path elements (white routing wires)
@@ -536,6 +651,10 @@ class VerticalRoutingExtractor:
                     # Sort by Y coordinate
                     connection_points_on_path.sort(key=lambda cp: cp.y)
 
+            # Find wire spec near this path, using first connection point as source
+            first_cp = connection_points_on_path[0]
+            wire_dm, wire_color = self._find_wire_spec_near_path(path_points, (first_cp.x, first_cp.y))
+
             # Create connections between ALL ADJACENT PAIRS along the path
             # This is similar to how we handle horizontal wires
             for i in range(len(connection_points_on_path) - 1):
@@ -580,8 +699,8 @@ class VerticalRoutingExtractor:
                     from_pin=source.pin,
                     to_id=dest.connector_id,
                     to_pin=dest.pin,
-                    wire_dm='',
-                    wire_color=''
+                    wire_dm=wire_dm,
+                    wire_color=wire_color
                 ))
 
         # Deduplicate connections (same from/to, regardless of order)
@@ -591,9 +710,10 @@ class VerticalRoutingExtractor:
 class GroundConnectionExtractor:
     """Extracts ground connections from st17 path elements."""
 
-    def __init__(self, paths: List[str], text_elements: List[TextElement], horizontal_connections: List[Connection] = None):
+    def __init__(self, paths: List[str], text_elements: List[TextElement], wire_specs: List = None, horizontal_connections: List[Connection] = None):
         self.paths = paths
         self.text_elements = text_elements
+        self.wire_specs = wire_specs or []
         self.horizontal_connections = horizontal_connections or []
 
         # Build set of (connector_id, pin) tuples that already have horizontal connections
@@ -603,6 +723,55 @@ class GroundConnectionExtractor:
                 self.pins_with_horizontal_wires.add((conn.from_id, conn.from_pin))
                 if conn.to_pin:  # If destination also has a pin
                     self.pins_with_horizontal_wires.add((conn.to_id, conn.to_pin))
+
+    def _find_wire_spec_for_ground(self, pin_x: float, pin_y: float, arrow_x: float, arrow_y: float) -> Tuple[str, str]:
+        """
+        Find wire spec for a ground connection.
+
+        Ground wires are typically horizontal from pin to ground arrow.
+        Spec should be above this horizontal line, between the pin and arrow.
+
+        Args:
+            pin_x, pin_y: Pin coordinates
+            arrow_x, arrow_y: Arrow/ground coordinates
+
+        Returns:
+            Tuple of (diameter, color) or ('', '') if no spec found
+        """
+        if not self.wire_specs:
+            return ('', '')
+
+        # X range between pin and arrow
+        x_min = min(pin_x, arrow_x)
+        x_max = max(pin_x, arrow_x)
+
+        # Y position is typically at the arrow level
+        target_y = arrow_y
+
+        min_distance = float('inf')
+        closest_spec = None
+
+        for spec in self.wire_specs:
+            # Spec must be between pin and arrow in X
+            if not (x_min < spec.x < x_max):
+                continue
+
+            # Spec must be above the wire (lower Y value)
+            y_dist = spec.y - target_y  # Negative if above
+
+            if -50 < y_dist < 0:  # Within 50 units above
+                # Calculate distance with Y-weighting
+                x_dist = abs(spec.x - pin_x)  # Distance from pin
+                distance = math.sqrt(x_dist**2 + (y_dist * 2.0)**2)
+
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_spec = spec
+
+        if closest_spec and min_distance < 150:
+            return (closest_spec.diameter, closest_spec.color)
+
+        return ('', '')
 
     def extract_connections(self) -> List[Connection]:
         """
@@ -689,13 +858,17 @@ class GroundConnectionExtractor:
                     px, pin_conn, pin_num, py = closest_pin
 
                     if not is_splice_point(pin_conn):
+                        # Find wire spec for this ground connection
+                        # Use ground connector position (gx, gy) not arrow position
+                        wire_dm, wire_color = self._find_wire_spec_for_ground(px, py, gx, gy)
+
                         connections.append(Connection(
                             from_id=pin_conn,
                             from_pin=pin_num,
                             to_id=ground_id,
                             to_pin='',
-                            wire_dm='',
-                            wire_color=''
+                            wire_dm=wire_dm,
+                            wire_color=wire_color
                         ))
                     continue
 
@@ -711,6 +884,10 @@ class GroundConnectionExtractor:
                 # when there are multiple candidates (prevents false positives)
                 unique_connectors = set(p[1] for p in pins_with_label_positions)
 
+                # Find wire spec for this ground connection
+                # Use ground connector position (gx, gy) not arrow position
+                wire_dm, wire_color = self._find_wire_spec_for_ground(px, py, gx, gy)
+
                 if len(unique_connectors) == 1:
                     # Only one connector candidate - always accept
                     connections.append(Connection(
@@ -718,8 +895,8 @@ class GroundConnectionExtractor:
                         from_pin=pin_num,
                         to_id=ground_id,
                         to_pin='',
-                        wire_dm='',
-                        wire_color=''
+                        wire_dm=wire_dm,
+                        wire_color=wire_color
                     ))
                 elif label_dist < 150:
                     # Multiple connectors - only accept if closest is within 150 units
@@ -728,8 +905,8 @@ class GroundConnectionExtractor:
                         from_pin=pin_num,
                         to_id=ground_id,
                         to_pin='',
-                        wire_dm='',
-                        wire_color=''
+                        wire_dm=wire_dm,
+                        wire_color=wire_color
                     ))
 
         # Deduplicate connections (same from/to, regardless of order)
