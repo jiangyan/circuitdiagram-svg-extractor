@@ -9,7 +9,7 @@
 | MH020 | 9 | G22_B(m) |  |  |  |
 | MH020 | 25 | G22_B(m) |  |  |  |
 | MH097 | 7 | MH020 | 1 | 0.35 | PU |
-| MH097 | 12 | RRS100 | 17 | 1.5 | RD/YE |
+| MH097 | 12 | MH020 | 17 | 1.5 | RD/YE |
 | MH101 | 2 | MH020 | 13 | 0.35 | BK/YE |
 | MH622 | 26 | SP184 |  | 0.35 | BK |
 | MH629 | 18 | G21(m) |  |  |  |
@@ -81,10 +81,10 @@
 | RRS513 | 6 | SP_CUSTOM_004 |  | 0.35 | PK/WH |
 | RRT14 | 3 | SP323 |  | 0.35 | BK |
 | RRT15 | 1 | SP305 |  |  |  |
+| RRT15 | 3 | SP323 |  |  |  |
 | SP113 |  | RR622 | 26 | 0.35 | BK |
-| SP123 |  | RRS200 | 11 | 1.5 | BK/BU |
+| SP123 |  | MH317 | 11 | 1.5 | BK/BU |
 | SP184 |  | MH630 | 18 | 0.35 | BK |
-| SP184 |  | SP113 |  |  |  |
 | SP305 |  | RRT14 | 1 | 0.35 | BK |
 | SP323 |  | RRT626 | 24 | 0.35 | BK |
 | SP_CUSTOM_001 |  | RRS112 | 7 |  |  |
@@ -94,7 +94,7 @@
 | SP_CUSTOM_006 |  | RLS103 | 1 | 1.5 | WH |
 | SP_CUSTOM_007 |  | SP_CUSTOM_005 |  |  |  |
 | SP_CUSTOM_008 |  | RRS300 | 12 | 1.5 | WH |
-| SP_CUSTOM_009 |  | RRS400 | 7 | 1.0 | BK/WH |
+| SP_CUSTOM_009 |  | RRS300 | 7 | 1.0 | BK/WH |
 
 ## Connections Grouped by Source Connector
 
@@ -110,7 +110,7 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 7 | MH020 | 1 | 0.35 | PU |
-| 12 | RRS100 | 17 | 1.5 | RD/YE |
+| 12 | MH020 | 17 | 1.5 | RD/YE |
 
 ### MH101 (1 connections)
 
@@ -307,11 +307,12 @@
 |----------|-----|--------|---------|-------|
 | 3 | SP323 |  | 0.35 | BK |
 
-### RRT15 (1 connections)
+### RRT15 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 1 | SP305 |  |  |  |
+| 3 | SP323 |  |  |  |
 
 ### SP113 (1 connections)
 
@@ -323,14 +324,13 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-|  | RRS200 | 11 | 1.5 | BK/BU |
+|  | MH317 | 11 | 1.5 | BK/BU |
 
-### SP184 (2 connections)
+### SP184 (1 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 |  | MH630 | 18 | 0.35 | BK |
-|  | SP113 |  |  |  |
 
 ### SP305 (1 connections)
 
@@ -390,4 +390,4 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-|  | RRS400 | 7 | 1.0 | BK/WH |
+|  | RRS300 | 7 | 1.0 | BK/WH |

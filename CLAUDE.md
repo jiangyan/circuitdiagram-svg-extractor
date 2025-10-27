@@ -255,6 +255,197 @@ Result: **MH020** is chosen (correct!)
 - Picking the wrong connector breaks wire tracing
 - "Between" logic ensures we follow the physical wire path
 
+### 7. L-Shaped Routing Wires (st3/st4 Path Filtering)
+
+**Edge Case:** Some circuit diagrams use L-shaped routing wires (vertical + horizontal segments) encoded as `<path class="st3">` or `<path class="st4">` elements.
+
+**Problem:**
+```
+st3 paths can represent TWO types of connections:
+1. TRUE L-shaped wires (vertical routing with 'v' or 'V' commands)
+2. Horizontal-only wires (using 'c' curve commands without vertical segments)
+
+Type 2 creates DUPLICATE connections already captured by wire specs!
+```
+
+**Example:**
+
+Horizontal wire with spec at Y=742.1:
+```xml
+<!-- Horizontal-only st3 path (DUPLICATE) -->
+<path class="st3" d="M401.3,742.1c285.8,0,142.8,0,149.4,0"/>
+<!-- Wire spec already captures this connection -->
+<text>0.35,BK</text>
+```
+
+L-shaped wire for RRT15,3 → SP323:
+```xml
+<!-- TRUE L-shaped st3 path (UNIQUE connection) -->
+<path class="st3" d="M624.3,796.2c76.4,0,52,0,71.8,0v-54.2"/>
+<!-- 'v-54.2' indicates vertical segment -->
+```
+
+**Solution:** Smart filtering - only parse st3/st4 paths with vertical segments.
+
+**Implementation:**
+
+```python
+def parse_routing_paths(svg_file: str, only_l_shaped: bool = True) -> List[str]:
+    """
+    Parse routing path elements, optionally filtering for L-shaped paths.
+
+    Args:
+        svg_file: Path to SVG file
+        only_l_shaped: If True, only return paths with vertical segments (v/V commands)
+                      to filter out horizontal-only paths that duplicate wire specs
+    """
+    paths = []
+
+    for path in root.iter('{http://www.w3.org/2000/svg}path'):
+        cls = path.get('class', '')
+        if cls in ['st3', 'st4']:
+            d = path.get('d', '').strip()
+            if d:
+                # Filter: only include L-shaped paths (those with vertical segments)
+                if only_l_shaped:
+                    if 'v' in d or 'V' in d:  # Check for vertical commands
+                        paths.append(d)
+                else:
+                    paths.append(d)
+
+    return paths
+```
+
+**Usage:**
+
+```python
+# In extract_connections.py
+routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # Only TRUE L-shaped wires
+```
+
+**Why This Matters:**
+
+- Enabling all st3/st4 paths creates massive duplicates (breaks test cases)
+- Smart filtering adds ONLY unique L-shaped connections
+- sample-wire.svg remains unchanged (no st3 paths with vertical segments)
+- test_cases adds RRT15,3 → SP323 connection without duplicates
+
+**SVG Path Commands Reference:**
+- `M x,y` - Move to absolute position
+- `c dx1,dy1,dx2,dy2,dx,dy` - Relative cubic Bezier curve (horizontal wire)
+- `v dy` - Relative vertical line (LOWERCASE = relative)
+- `V y` - Absolute vertical line (UPPERCASE = absolute)
+- `h dx` - Relative horizontal line
+- `H x` - Absolute horizontal line
+
+### 8. Pass-Through Splice Point Filtering
+
+**Edge Case:** Splice points that act as "pass-throughs" for horizontal wires.
+
+**Problem:**
+```
+Splice Point Anatomy:
+    SP113 (829.9, 732.2)
+      ↑            ↑
+  Left wire   Right wire
+(from RR626)  (to RR622)
+
+When a splice has horizontal wires on BOTH sides, it's a "pass-through".
+Routing connections (polylines) should NOT connect two pass-through splices!
+```
+
+**Example of False Connection:**
+
+```
+Horizontal wires at Y=732.2:
+  RR626,24 → SP113 (horizontal wire with 0.35,BK spec)
+  SP113 → RR622,26 (horizontal wire with 0.35,BK spec)
+
+  MH622,26 → SP184 (horizontal wire with 0.35,BK spec)
+  SP184 → MH630,18 (horizontal wire with 0.35,BK spec)
+
+Polyline: 974.8,742.1 → 974.8,777.5 → 822.1,777.5
+  Nearest to start: SP184 (10.9 units)
+  Nearest to end: SP113 (46.0 units)
+
+❌ Algorithm creates: SP184 → SP113
+   This is WRONG! Both are pass-throughs with dedicated horizontal wires.
+```
+
+**Solution:** Track pass-through splices and filter routing connections between them.
+
+**Implementation:**
+
+```python
+class VerticalRoutingExtractor:
+    def __init__(self, polylines, routing_paths, text_elements, horizontal_connections):
+        # ... existing code ...
+
+        # Track splice points with horizontal connections on BOTH sides
+        splice_incoming = {}  # splice_id -> count of incoming horizontal wires
+        splice_outgoing = {}  # splice_id -> count of outgoing horizontal wires
+
+        for conn in horizontal_connections:
+            if is_splice_point(conn.from_id):
+                splice_outgoing[conn.from_id] = splice_outgoing.get(conn.from_id, 0) + 1
+            if is_splice_point(conn.to_id):
+                splice_incoming[conn.to_id] = splice_incoming.get(conn.to_id, 0) + 1
+
+        # Identify bidirectional pass-through splices
+        self.passthrough_splices = set()
+        for splice_id in set(splice_incoming.keys()) | set(splice_outgoing.keys()):
+            if splice_incoming.get(splice_id, 0) >= 1 and splice_outgoing.get(splice_id, 0) >= 1:
+                self.passthrough_splices.add(splice_id)
+
+    def extract_connections(self):
+        # ... process polylines ...
+
+        # Filter: Skip routing connections between two pass-through splices
+        if (source_endpoint.connector_id in self.passthrough_splices and
+            dest_endpoint.connector_id in self.passthrough_splices):
+            continue  # Don't create connection
+
+        # But ALLOW connections from pass-through splices to pins
+        # Example: SP025 → FL7611,9 is valid (SP025 is pass-through, FL7611 is a pin)
+```
+
+**Multi-Segment Polyline Filtering:**
+
+For polylines with intermediate splices (e.g., `pin1 → splice → pin2`):
+
+```python
+# In multi-segment polyline code (lines 300-335 of extractors.py)
+if splice_found:
+    # Connection 1: endpoint1 → splice
+    if not (endpoint1.connector_id in self.passthrough_splices and
+            splice_found.connector_id in self.passthrough_splices):
+        connections.append(Connection(...))
+
+    # Connection 2: splice → endpoint2
+    if not (splice_found.connector_id in self.passthrough_splices and
+            endpoint2.connector_id in self.passthrough_splices):
+        connections.append(Connection(...))
+```
+
+**Why This Matters:**
+
+- Pass-through splices are common in automotive circuit diagrams
+- Without filtering, false connections create invalid wire traces
+- Filtering preserves legitimate connections (splice → pin, pin → splice)
+- Only blocks splice → splice connections for pass-through nodes
+
+**Examples:**
+
+```
+✓ ALLOWED:
+  - SP025 → FL7611,9 (pass-through splice to pin)
+  - RRT15,3 → SP323 (pin to pass-through splice)
+
+❌ BLOCKED:
+  - SP184 → SP113 (both are pass-through splices)
+  - SP305 → SP323 (both are pass-through splices)
+```
+
 ## SVG Structure Patterns
 
 ### Text Element Format
@@ -376,6 +567,8 @@ Additional section groups connections by source connector with statistics:
 2. **Fixed distance thresholds** - Different connector types have different layouts
 3. **"Closest connector wins"** - Doesn't account for junction semantics
 4. **Large Y-axis tolerance (±20)** - Groups pins from different wire rows
+5. **Enabling all st3/st4 paths** - Creates massive duplicates of horizontal wires
+6. **Ignoring pass-through splices** - Creates false connections between splice points with horizontal wires
 
 ### What Works
 
@@ -384,6 +577,8 @@ Additional section groups connections by source connector with statistics:
 3. **Junction direction rules** - `*2FL` as destinations, `FL2*` as sources
 4. **Simple "connector above pin" lookup** - No spatial complexity
 5. **Pin-pair deduplication** - Handles overlapping wire specifications
+6. **Smart L-shaped path filtering** - Only parse st3/st4 paths with vertical segments ('v' or 'V' commands)
+7. **Pass-through splice detection** - Track splices with horizontal wires on both sides, filter routing connections between them
 
 ## Architecture (Refactored - Current Version)
 
@@ -438,9 +633,14 @@ class IDGenerator:
 
 - `parse_text_elements()` - Extract all text with coordinates
 - `parse_splice_dots()` - Find splice point dot positions (circle paths)
+- `parse_all_polylines()` - Extract all polylines (including routing)
 - `parse_st17_polylines()` - Extract vertical routing polylines
 - `parse_st17_paths()` - Extract ground connection paths
+- `parse_st1_paths()` - Extract white routing wire paths
+- `parse_routing_paths(only_l_shaped=True)` - Extract L-shaped routing paths (st3/st4) with vertical segments
 - `extract_wire_specs()` - Find wire specifications (diameter, color)
+- `extract_path_endpoints()` - Extract start and end points from path 'd' attribute
+- `extract_path_all_points()` - Extract all points along a path (for multi-segment polylines)
 - `map_splice_positions_to_dots()` - Map SP* labels to actual dot positions
 - `generate_ids_for_unlabeled_splices()` - Generate custom IDs (SP_CUSTOM_*) for dots without labels
 
@@ -476,9 +676,15 @@ Three specialized extraction classes:
    - Creates connections between ALL ADJACENT PAIRS
    - Handles junction selection with source_x context
 
-2. **VerticalRoutingExtractor** - Processes st17 polylines
-   - Finds nearest connection points to polyline endpoints
+2. **VerticalRoutingExtractor** - Processes st17 polylines, st1 paths, and st3/st4 routing paths
+   - Processes st17 polylines (vertical routing arrows)
+   - Processes st1 paths (white routing wires)
+   - Processes st3/st4 paths (L-shaped routing wires with vertical segments)
+   - Tracks pass-through splices (splices with horizontal wires on both sides)
+   - Finds nearest connection points to polyline/path endpoints
    - Handles multi-segment polylines with intermediate splices
+   - Filters routing connections between two pass-through splices
+   - Allows connections from pass-through splices to pins
    - Deduplicates before returning
 
 3. **GroundConnectionExtractor** - Processes st17 paths
@@ -506,8 +712,10 @@ id_generator = IDGenerator()
 # 1. Parse all SVG elements
 text_elements = parse_text_elements(svg_file)
 splice_dots = parse_splice_dots(svg_file)
-polylines = parse_st17_polylines(svg_file)
-paths = parse_st17_paths(svg_file)
+all_polylines = parse_all_polylines(svg_file)  # All polylines (including routing)
+st17_paths = parse_st17_paths(svg_file)  # Ground connection paths
+st1_paths = parse_st1_paths(svg_file)  # White routing wires
+routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # L-shaped routing wires
 
 # 2. Map splice positions
 text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
@@ -520,11 +728,18 @@ wire_specs = extract_wire_specs(text_elements)
 
 # 4. Run extractors independently
 horizontal_connections = HorizontalWireExtractor(text_elements, wire_specs).extract_connections()
-vertical_connections = VerticalRoutingExtractor(polylines, text_elements).extract_connections()
-ground_connections = GroundConnectionExtractor(paths, text_elements).extract_connections()
 
-# 5. Combine (no global deduplication - each extractor deduplicates internally)
-all_connections = horizontal_connections + vertical_connections + ground_connections
+# Combine st1 and st3/st4 routing paths for vertical routing extractor
+all_routing_paths = st1_paths + routing_paths
+routing_connections = VerticalRoutingExtractor(
+    all_polylines, all_routing_paths, text_elements, horizontal_connections
+).extract_connections()
+
+ground_connections = GroundConnectionExtractor(st17_paths, text_elements, horizontal_connections).extract_connections()
+
+# 5. Combine and deduplicate globally
+combined = horizontal_connections + routing_connections + ground_connections
+all_connections = deduplicate_connections(combined)
 
 # 6. Export
 export_to_file(all_connections, output_file)
