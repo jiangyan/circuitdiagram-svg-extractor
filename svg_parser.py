@@ -217,7 +217,7 @@ def parse_st1_paths(svg_file: str) -> List[str]:
     return paths
 
 
-def parse_routing_paths(svg_file: str, path_classes: List[str] = None) -> List[str]:
+def parse_routing_paths(svg_file: str, path_classes: List[str] = None, only_l_shaped: bool = True) -> List[str]:
     """
     Parse routing path elements by class names.
 
@@ -225,6 +225,8 @@ def parse_routing_paths(svg_file: str, path_classes: List[str] = None) -> List[s
         svg_file: Path to SVG file
         path_classes: List of class names to parse (e.g., ['st3', 'st4'])
                      If None, defaults to ['st3', 'st4']
+        only_l_shaped: If True, only return paths with vertical segments (v/V commands)
+                      to filter out horizontal-only paths that duplicate wire specs
 
     Returns:
         List of d attribute strings
@@ -242,7 +244,13 @@ def parse_routing_paths(svg_file: str, path_classes: List[str] = None) -> List[s
         if cls in path_classes:
             d = path.get('d', '').strip()
             if d:
-                paths.append(d)
+                # Filter: only include L-shaped paths (those with vertical segments)
+                # This prevents duplicates from horizontal-only st3 paths
+                if only_l_shaped:
+                    if 'v' in d or 'V' in d:
+                        paths.append(d)
+                else:
+                    paths.append(d)
 
     return paths
 

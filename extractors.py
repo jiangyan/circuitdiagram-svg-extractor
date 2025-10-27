@@ -162,6 +162,23 @@ class VerticalRoutingExtractor:
             if conn.from_pin and not is_splice_point(conn.from_id):
                 self.pins_with_horizontal_wires.add((conn.from_id, conn.from_pin))
 
+        # Also track splice points that have horizontal connections on BOTH sides
+        # These are "pass-through" splices that shouldn't have additional routing
+        splice_incoming = {}  # splice_id -> count of incoming horizontal wires
+        splice_outgoing = {}  # splice_id -> count of outgoing horizontal wires
+
+        for conn in self.horizontal_connections:
+            if is_splice_point(conn.from_id):
+                splice_outgoing[conn.from_id] = splice_outgoing.get(conn.from_id, 0) + 1
+            if is_splice_point(conn.to_id):
+                splice_incoming[conn.to_id] = splice_incoming.get(conn.to_id, 0) + 1
+
+        # Track splice points with connections on both sides (bidirectional pass-through)
+        self.passthrough_splices = set()
+        for splice_id in set(splice_incoming.keys()) | set(splice_outgoing.keys()):
+            if splice_incoming.get(splice_id, 0) >= 1 and splice_outgoing.get(splice_id, 0) >= 1:
+                self.passthrough_splices.add(splice_id)
+
     def extract_connections(self) -> List[Connection]:
         """
         Extract all vertical routing connections.
@@ -271,27 +288,33 @@ class VerticalRoutingExtractor:
                     if not (endpoint1.connector_id == splice_found.connector_id and
                             endpoint1.pin == splice_found.pin) and \
                        ep1_key not in self.pins_with_horizontal_wires:
-                        connections.append(Connection(
-                            from_id=endpoint1.connector_id,
-                            from_pin=endpoint1.pin,
-                            to_id=splice_found.connector_id,
-                            to_pin=splice_found.pin,
-                            wire_dm='',
-                            wire_color=''
-                        ))
+                        # Skip if both endpoints are pass-through splices
+                        if not (endpoint1.connector_id in self.passthrough_splices and
+                                splice_found.connector_id in self.passthrough_splices):
+                            connections.append(Connection(
+                                from_id=endpoint1.connector_id,
+                                from_pin=endpoint1.pin,
+                                to_id=splice_found.connector_id,
+                                to_pin=splice_found.pin,
+                                wire_dm='',
+                                wire_color=''
+                            ))
 
                     # Connection 2: splice -> endpoint2 (skip if self-loop)
                     # This creates a chain: endpoint1 -> splice -> endpoint2
                     if not (endpoint2.connector_id == splice_found.connector_id and
                             endpoint2.pin == splice_found.pin):
-                        connections.append(Connection(
-                            from_id=splice_found.connector_id,
-                            from_pin=splice_found.pin,
-                            to_id=endpoint2.connector_id,
-                            to_pin=endpoint2.pin,
-                            wire_dm='',
-                            wire_color=''
-                        ))
+                        # Skip if both endpoints are pass-through splices
+                        if not (splice_found.connector_id in self.passthrough_splices and
+                                endpoint2.connector_id in self.passthrough_splices):
+                            connections.append(Connection(
+                                from_id=splice_found.connector_id,
+                                from_pin=splice_found.pin,
+                                to_id=endpoint2.connector_id,
+                                to_pin=endpoint2.pin,
+                                wire_dm='',
+                                wire_color=''
+                            ))
                     continue
 
             # Normal case: determine direction
@@ -321,6 +344,13 @@ class VerticalRoutingExtractor:
             # (Horizontal wires take precedence over routing paths)
             source_key = (source_endpoint.connector_id, source_endpoint.pin)
             if source_key in self.pins_with_horizontal_wires:
+                continue
+
+            # Skip routing connections between two pass-through splice points
+            # (Avoids false connections like SP184 → SP113 where both have horizontal wires)
+            # But allow connections from pass-through splices to pins (e.g., SP025 → FL7611,9)
+            if (source_endpoint.connector_id in self.passthrough_splices and
+                dest_endpoint.connector_id in self.passthrough_splices):
                 continue
 
             # Create connection
