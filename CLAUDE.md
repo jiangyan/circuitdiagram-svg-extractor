@@ -255,6 +255,102 @@ Result: **MH020** is chosen (correct!)
 - Picking the wrong connector breaks wire tracing
 - "Between" logic ensures we follow the physical wire path
 
+**Critical Configuration:**
+
+The "between" logic has a Y-distance threshold to prevent distant connectors from being prioritized just because they happen to be between in X:
+
+```python
+# Only prioritize "between" connectors if they're reasonably close in Y
+# Use a threshold of 60 Y-units as "reasonable" vertical distance
+if is_between and y_dist < 60:
+    between_connectors.append(conn)
+```
+
+Initially set to 50 units, this was increased to 60 units after discovering that valid "between" connectors at Y-distance=52.4 were being excluded.
+
+### 6a. Wire Spec Selection for Groups with Multiple Y Positions
+
+**Edge Case:** Multiple wire specs grouped together (round(Y/10)*10) can have significantly different Y positions, causing connection points to be missed.
+
+**Problem:**
+```
+Group 110 contains 3 wire specs:
+  - 1.5,YE/GN at Y=106.7
+  - 2.5,RD/WH at Y=111.9
+  - 2.5,YE at Y=112.1
+
+If algorithm uses specs_on_line[0].y (106.7) to find pins within ±10:
+  - Matches pins at Y=112-116 ✓
+  - MISSES pins at Y=118 ✗ (118 > 106.7+10)
+
+Result: Valid connections involving pins at Y=118 are not created!
+```
+
+**Root Cause:** The original implementation used `specs_on_line[0].y` as the reference Y position for finding connection points. When the first spec in a group had a significantly different Y than other specs, pins near the other specs would not be matched.
+
+**Solution:** Check if connection points are within ±10 of **ANY** spec in the group, not just the first one.
+
+**Implementation:**
+
+```python
+# BEFORE (WRONG):
+for elem in self.text_elements:
+    if abs(elem.y - specs_on_line[0].y) < 10:  # Only checks first spec!
+        if elem.content.isdigit() or is_splice_point(elem.content):
+            connection_points.append(elem)
+
+# AFTER (CORRECT):
+for elem in self.text_elements:
+    if elem.content.isdigit() or is_splice_point(elem.content):
+        for spec in specs_on_line:  # Check ALL specs in group
+            if abs(elem.y - spec.y) < 10:
+                connection_points.append(elem)
+                break  # Don't add same element multiple times
+```
+
+**Wire Spec Selection Logic:**
+
+Once all connection points are found, select the wire spec **closest in Y-distance to the average pin position**:
+
+```python
+# Calculate average Y position of all connection points
+avg_pin_y = sum(p.y for p in connection_points) / len(connection_points)
+
+# Select the wire spec closest in Y to the average
+wire_spec = min(specs_on_line, key=lambda s: abs(s.y - avg_pin_y))
+```
+
+This implements the principle that **wire specs are positioned directly above the wires they describe**.
+
+**Example:**
+
+```
+Group 110 specs:
+  - 1.5,YE/GN at Y=106.7
+  - 2.5,RD/WH at Y=111.9
+  - 2.5,YE at Y=112.1
+
+Connection points found: pins at Y=112.2, 112.3, 112.5, 117.9, 118.2, 118.4
+Average pin Y: 115.2
+
+Y-distances from average:
+  - 1.5,YE/GN: |106.7 - 115.2| = 8.5 units
+  - 2.5,RD/WH: |111.9 - 115.2| = 3.3 units
+  - 2.5,YE: |112.1 - 115.2| = 3.1 units ✓ SELECTED
+
+Result: Connections use 2.5,YE (the spec closest to the pins)
+```
+
+**Why This Matters:**
+
+- Prevents missing valid connections when wire specs have varying Y positions
+- Ensures the correct wire spec is used (closest to actual pins, not arbitrary first spec)
+- Respects the physical layout principle that specs are positioned above their wires
+
+**Real-World Impact:**
+
+This fix resolved MH097,12 → MH020,17 showing wrong wire spec (1.5,RD/YE instead of 2.5,YE) and discovered a previously missed valid connection (RRS113,11 → RRS112,4 with 2.5,YE).
+
 ### 7. L-Shaped Routing Wires (st3/st4 Path Filtering)
 
 **Edge Case:** Some circuit diagrams use L-shaped routing wires (vertical + horizontal segments) encoded as `<path class="st3">` or `<path class="st4">` elements.

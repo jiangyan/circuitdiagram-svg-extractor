@@ -46,16 +46,18 @@ class HorizontalWireExtractor:
 
         # Process each horizontal line
         for line_y, specs_on_line in wire_lines.items():
-            # Use the first wire spec for diameter/color (they should all be the same on one line)
-            wire_spec = specs_on_line[0]
-
-            # Find all connection points on this horizontal line (±10 Y units)
-            # Connection points can be: pins (numeric) OR splice points (SP*)
+            # CRITICAL: Use the wire spec that is CLOSEST in Y to the connection points
+            # Wire specs are typically positioned directly above the wires they describe
+            # First, find all connection points for this group
             connection_points = []
             for elem in self.text_elements:
-                if abs(elem.y - wire_spec.y) < 10:
-                    if elem.content.isdigit() or is_splice_point(elem.content):
-                        connection_points.append(elem)
+                # IMPORTANT: Check if element is within ±10 of ANY spec in the group
+                # (not just the first spec, since specs in a group can have different Y positions)
+                if elem.content.isdigit() or is_splice_point(elem.content):
+                    for spec in specs_on_line:
+                        if abs(elem.y - spec.y) < 10:
+                            connection_points.append(elem)
+                            break  # Don't add the same element multiple times
 
             if len(connection_points) < 2:
                 # Need at least 2 connection points
@@ -64,11 +66,51 @@ class HorizontalWireExtractor:
             # Sort connection points by X coordinate (left to right)
             connection_points.sort(key=lambda p: p.x)
 
+            # CRITICAL: Remove duplicate X positions (pins from different horizontal lines)
+            # Keep the pin that is closest in Y to any spec in this group
+            unique_x_points = []
+            i = 0
+            while i < len(connection_points):
+                current_x = connection_points[i].x
+                # Collect all points at this X position (within 0.5 units)
+                points_at_x = [connection_points[i]]
+                j = i + 1
+                while j < len(connection_points) and abs(connection_points[j].x - current_x) < 0.5:
+                    points_at_x.append(connection_points[j])
+                    j += 1
+
+                # If multiple points at same X, pick the one closest in Y to any spec
+                if len(points_at_x) > 1:
+                    best_point = min(points_at_x, key=lambda p: min(abs(p.y - s.y) for s in specs_on_line))
+                    unique_x_points.append(best_point)
+                else:
+                    unique_x_points.append(points_at_x[0])
+
+                i = j
+
+            connection_points = unique_x_points
+
             # Create connections between ALL ADJACENT pairs of connection points on this line
             # This handles: pin→splice, splice→splice, splice→pin, pin→pin
             for i in range(len(connection_points) - 1):
                 left_point = connection_points[i]
                 right_point = connection_points[i + 1]
+
+                # CRITICAL: Select wire spec FOR THIS SPECIFIC PAIR
+                # 1. Find specs BETWEEN the two points (in X)
+                # 2. Of those, pick the one closest in Y to the pair's average Y
+                pair_avg_y = (left_point.y + right_point.y) / 2
+                between_specs = [
+                    s for s in specs_on_line
+                    if left_point.x < s.x < right_point.x
+                ]
+
+                if between_specs:
+                    # Use spec between the points, closest in Y
+                    wire_spec = min(between_specs, key=lambda s: abs(s.y - pair_avg_y))
+                else:
+                    # No spec between - use closest in Y to the pair
+                    wire_spec = min(specs_on_line, key=lambda s: abs(s.y - pair_avg_y))
 
                 # Find entities for both connection points
                 # Left is source
@@ -92,17 +134,42 @@ class HorizontalWireExtractor:
                 if left_id == right_id and left_pin != right_pin and not is_splice_point(left_id):
                     continue
 
+                # CRITICAL: Skip connections between pins from different, distant connectors
+                # This prevents false connections between separate modules on the same line
+                if not is_splice_point(left_id) and not is_splice_point(right_id) and left_id != right_id:
+                    # Find the connector labels for left and right pins
+                    left_conn_x, left_conn_y = None, None
+                    right_conn_x, right_conn_y = None, None
+
+                    for elem in self.text_elements:
+                        if elem.content == left_id:
+                            # Check if this connector is above the left pin (within 50 Y units)
+                            if abs(elem.x - left_point.x) < 50 and abs(left_point.y - elem.y) < 50:
+                                left_conn_x, left_conn_y = elem.x, elem.y
+                        if elem.content == right_id:
+                            # Check if this connector is above the right pin (within 50 Y units)
+                            if abs(elem.x - right_point.x) < 50 and abs(right_point.y - elem.y) < 50:
+                                right_conn_x, right_conn_y = elem.x, elem.y
+
+                    # If both connectors found and they're far apart (>100 units), skip
+                    if left_conn_x and right_conn_x:
+                        conn_distance = abs(right_conn_x - left_conn_x)
+                        if conn_distance > 100:
+                            # Check if there's a wire spec between the connectors
+                            # If yes, it's likely a valid inter-module connection
+                            has_spec_between_connectors = any(
+                                min(left_conn_x, right_conn_x) < s.x < max(left_conn_x, right_conn_x)
+                                for s in specs_on_line
+                            )
+                            if not has_spec_between_connectors:
+                                # No wire spec between connectors - skip this connection
+                                continue
+
                 # Create a unique key for this connection
                 connection_key = tuple(sorted([
                     (left_id, left_pin, left_point.x, left_point.y),
                     (right_id, right_pin, right_point.x, right_point.y)
                 ]))
-
-                # Skip if we've already created this connection
-                if connection_key in self.seen_pin_pairs:
-                    continue
-
-                self.seen_pin_pairs.add(connection_key)
 
                 connection = Connection(
                     from_id=left_id,
@@ -112,6 +179,25 @@ class HorizontalWireExtractor:
                     wire_dm=wire_spec.diameter,
                     wire_color=wire_spec.color
                 )
+
+                # CRITICAL: If this connection already exists, keep the one with spec BETWEEN the pins
+                if connection_key in self.seen_pin_pairs:
+                    # Find the existing connection
+                    existing_conn_idx = None
+                    for idx, conn in enumerate(connections):
+                        if (sorted([(conn.from_id, conn.from_pin, left_point.x, left_point.y),
+                                    (conn.to_id, conn.to_pin, right_point.x, right_point.y)]) == list(connection_key)):
+                            existing_conn_idx = idx
+                            break
+
+                    # If we found the existing connection, check if new one has spec between
+                    if existing_conn_idx is not None and len(between_specs) > 0:
+                        # New connection has spec between - replace the old one
+                        connections[existing_conn_idx] = connection
+                    # Otherwise skip (keep the existing connection)
+                    continue
+
+                self.seen_pin_pairs.add(connection_key)
                 connections.append(connection)
 
         return connections
