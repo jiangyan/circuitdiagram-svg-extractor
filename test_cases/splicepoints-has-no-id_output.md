@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 86
+**Total Connections:** 85
 
 ## All Connections (Sorted by From Connector)
 
@@ -28,14 +28,15 @@
 | RRS111 | 8 | RRS294 | 4 | 0.35 | YE/BU |
 | RRS111 | 11 | SP_CUSTOM_007 |  | 0.35 | BK/RD |
 | RRS111 | 20 | RRS293 | 4 | 0.35 | BK/YE |
-| RRS111 | 26 | RRS112 | 7 | 1.5 | WH/GN |
 | RRS111 | 37 | RRS300 | 5 | 0.35 | PU/BK |
 | RRS112 | 3 | RRS289 | 1 | 1.5 | RD/YE |
 | RRS112 | 4 | RRS289 | 3 | 1.5 | YE/GN |
 | RRS112 | 5 | RRS292 | 1 | 1.5 | GN/YE |
 | RRS112 | 6 | RRS294 | 3 | 1.5 | BK/WH |
+| RRS112 | 7 | SP_CUSTOM_001 |  | 1.5 | WH/GN |
 | RRS112 | 8 | RRS287 | 3 | 1.5 | BK/BU |
 | RRS112 | 9 | RRS310 | 1 | 0.75 | YE/BK |
+| RRS112 | 10 | SP_CUSTOM_002 |  | 0.75 | OG/BU |
 | RRS113 | 12 | RRS293 | 3 | 1.5 | BK/WH |
 | RRS113 | 13 | RRS100 | 25 | 2.5 | BK/PU |
 | RRS113 | 14 | RRS293 | 1 | 1.5 | WH/YE |
@@ -44,8 +45,6 @@
 | RRS114 | 7 | SP_CUSTOM_009 |  | 0.75 | GN |
 | RRS114 | 8 | RRS100 | 9 | 2.5 | BK |
 | RRS114 | 9 | SP_CUSTOM_008 |  | 0.75 | PK/BK |
-| RRS114 | 10 | RRS111 | 4 | 0.35 | PU |
-| RRS200 | 8 | RRS513 | 8 | 0.35 | PK/WH |
 | RRS200 | 11 | SP_CUSTOM_003 |  | 0.35 | BK/WH |
 | RRS262 | 2 | RRS400 | 11 | 0.35 | BK |
 | RRS263 | 2 | RRS300 | 8 | 0.35 | BK |
@@ -154,7 +153,7 @@
 | 13 | RRS513 | 7 | 0.35 | RD/OG |
 | 17 | RRS113 | 11 | 2.5 | RD/WH |
 
-### RRS111 (10 connections)
+### RRS111 (9 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
@@ -166,10 +165,9 @@
 | 8 | RRS294 | 4 | 0.35 | YE/BU |
 | 11 | SP_CUSTOM_007 |  | 0.35 | BK/RD |
 | 20 | RRS293 | 4 | 0.35 | BK/YE |
-| 26 | RRS112 | 7 | 1.5 | WH/GN |
 | 37 | RRS300 | 5 | 0.35 | PU/BK |
 
-### RRS112 (6 connections)
+### RRS112 (8 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
@@ -177,8 +175,10 @@
 | 4 | RRS289 | 3 | 1.5 | YE/GN |
 | 5 | RRS292 | 1 | 1.5 | GN/YE |
 | 6 | RRS294 | 3 | 1.5 | BK/WH |
+| 7 | SP_CUSTOM_001 |  | 1.5 | WH/GN |
 | 8 | RRS287 | 3 | 1.5 | BK/BU |
 | 9 | RRS310 | 1 | 0.75 | YE/BK |
+| 10 | SP_CUSTOM_002 |  | 0.75 | OG/BU |
 
 ### RRS113 (3 connections)
 
@@ -188,7 +188,7 @@
 | 13 | RRS100 | 25 | 2.5 | BK/PU |
 | 14 | RRS293 | 1 | 1.5 | WH/YE |
 
-### RRS114 (6 connections)
+### RRS114 (5 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
@@ -197,13 +197,11 @@
 | 7 | SP_CUSTOM_009 |  | 0.75 | GN |
 | 8 | RRS100 | 9 | 2.5 | BK |
 | 9 | SP_CUSTOM_008 |  | 0.75 | PK/BK |
-| 10 | RRS111 | 4 | 0.35 | PU |
 
-### RRS200 (2 connections)
+### RRS200 (1 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 8 | RRS513 | 8 | 0.35 | PK/WH |
 | 11 | SP_CUSTOM_003 |  | 0.35 | BK/WH |
 
 ### RRS262 (1 connections)

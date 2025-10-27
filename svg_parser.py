@@ -150,6 +150,9 @@ def parse_all_polylines(svg_file: str) -> List[str]:
     This includes st17 (vertical routing), st3/st4 (diagonal routing to confluence points),
     and any other polyline-based wire connections.
 
+    IMPORTANT: Deduplicates near-identical polylines (e.g., st20/st21 outline pairs)
+    that represent the same wire but with slightly different endpoints.
+
     Args:
         svg_file: Path to SVG file
 
@@ -166,7 +169,57 @@ def parse_all_polylines(svg_file: str) -> List[str]:
         if points:
             polylines.append(points)
 
-    return polylines
+    # Deduplicate near-identical polylines
+    # Some SVGs have decorative outline pairs (e.g., st20/st21) with same path but endpoints differ by ~1 unit
+    deduplicated = []
+    for points_str in polylines:
+        # Parse points
+        parsed = []
+        for p in points_str.split():
+            if ',' in p:
+                x, y = p.split(',')
+                parsed.append((float(x), float(y)))
+
+        if len(parsed) < 2:
+            continue
+
+        # Check if this polyline is a near-duplicate of an existing one
+        is_duplicate = False
+        for existing_str in deduplicated:
+            existing_parsed = []
+            for p in existing_str.split():
+                if ',' in p:
+                    x, y = p.split(',')
+                    existing_parsed.append((float(x), float(y)))
+
+            # Compare: same length, same start, same intermediate points, close end
+            if len(parsed) == len(existing_parsed):
+                # Check start point (within 2 units)
+                start_dist = abs(parsed[0][0] - existing_parsed[0][0]) + abs(parsed[0][1] - existing_parsed[0][1])
+                if start_dist > 2:
+                    continue
+
+                # Check intermediate points (within 2 units each)
+                all_intermediates_match = True
+                for i in range(1, len(parsed) - 1):
+                    dist = abs(parsed[i][0] - existing_parsed[i][0]) + abs(parsed[i][1] - existing_parsed[i][1])
+                    if dist > 2:
+                        all_intermediates_match = False
+                        break
+
+                if not all_intermediates_match:
+                    continue
+
+                # Check end point (within 2 units)
+                end_dist = abs(parsed[-1][0] - existing_parsed[-1][0]) + abs(parsed[-1][1] - existing_parsed[-1][1])
+                if end_dist <= 2:
+                    is_duplicate = True
+                    break
+
+        if not is_duplicate:
+            deduplicated.append(points_str)
+
+    return deduplicated
 
 
 def parse_st17_paths(svg_file: str) -> List[str]:

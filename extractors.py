@@ -63,6 +63,24 @@ class HorizontalWireExtractor:
                 # Need at least 2 connection points
                 continue
 
+            # CRITICAL: Filter out pins that are too far apart in Y from each other
+            # Pins on the same horizontal wire should be within ±10 of EACH OTHER
+            # Not just within ±10 of the wire spec (which can group pins from different lines)
+            if connection_points:
+                # Find the Y-range of connection points
+                y_values = [p.y for p in connection_points]
+                y_range = max(y_values) - min(y_values)
+
+                if y_range > 10:
+                    # Pins are spread across > 10 Y units - likely from different horizontal lines
+                    # Keep only pins within ±10 of the median Y (most common line)
+                    median_y = sorted(y_values)[len(y_values) // 2]
+                    connection_points = [p for p in connection_points if abs(p.y - median_y) <= 10]
+
+            if len(connection_points) < 2:
+                # After filtering, need at least 2 connection points
+                continue
+
             # Sort connection points by X coordinate (left to right)
             connection_points.sort(key=lambda p: p.x)
 
@@ -89,6 +107,7 @@ class HorizontalWireExtractor:
                 i = j
 
             connection_points = unique_x_points
+
 
             # Create connections between ALL ADJACENT pairs of connection points on this line
             # This handles: pin→splice, splice→splice, splice→pin, pin→pin
@@ -121,37 +140,49 @@ class HorizontalWireExtractor:
                 if not left_endpoint or not right_endpoint:
                     continue
 
-                left_id, left_pin = left_endpoint
-                right_id, right_pin = right_endpoint
+                left_id, left_pin, left_conn_x, left_conn_y = left_endpoint
+                right_id, right_pin, right_conn_x, right_conn_y = right_endpoint
 
                 # Skip if pins are too far apart horizontally (>220 units)
-                # This prevents false connections between pins on opposite sides of the diagram
+                # UNLESS there's a wire spec between them (which indicates a valid long-distance connection)
                 x_distance = abs(right_point.x - left_point.x)
                 if x_distance > 220:
-                    continue
+                    # Check if there's a spec between the pins
+                    has_spec_between_pins = any(
+                        left_point.x < s.x < right_point.x
+                        for s in specs_on_line
+                    )
+                    if not has_spec_between_pins:
+                        # No spec between pins - skip this connection
+                        continue
 
                 # Skip self-connections (same connector, different pins on same line)
                 if left_id == right_id and left_pin != right_pin and not is_splice_point(left_id):
                     continue
 
+                # CRITICAL: Skip connections that bypass splice points
+                # If there's a splice point BETWEEN left and right, don't create a direct connection
+                # Example: If we have A → SP1 → SP2 on same line, create A→SP1 and SP1→SP2, but NOT A→SP2
+                # This is the "when it arrives SP, done" logic
+                #
+                # Two cases:
+                # 1. pin → pin: skip if splice between
+                # 2. pin → splice: skip if another splice between
+                if not is_splice_point(left_id):
+                    # Left is a pin/connector, check if there's a splice between left and right
+                    has_splice_between = any(
+                        is_splice_point(point.content) and left_point.x < point.x < right_point.x
+                        for point in connection_points
+                    )
+                    if has_splice_between:
+                        # There's a splice between - skip this direct connection
+                        continue
+
                 # CRITICAL: Skip connections between pins from different, distant connectors
                 # This prevents false connections between separate modules on the same line
+                # Use connector coordinates from _find_endpoint (already found by find_connector_above_pin)
                 if not is_splice_point(left_id) and not is_splice_point(right_id) and left_id != right_id:
-                    # Find the connector labels for left and right pins
-                    left_conn_x, left_conn_y = None, None
-                    right_conn_x, right_conn_y = None, None
-
-                    for elem in self.text_elements:
-                        if elem.content == left_id:
-                            # Check if this connector is above the left pin (within 50 Y units)
-                            if abs(elem.x - left_point.x) < 50 and abs(left_point.y - elem.y) < 50:
-                                left_conn_x, left_conn_y = elem.x, elem.y
-                        if elem.content == right_id:
-                            # Check if this connector is above the right pin (within 50 Y units)
-                            if abs(elem.x - right_point.x) < 50 and abs(right_point.y - elem.y) < 50:
-                                right_conn_x, right_conn_y = elem.x, elem.y
-
-                    # If both connectors found and they're far apart (>100 units), skip
+                    # Check if connectors are far apart (>100 units)
                     if left_conn_x and right_conn_x:
                         conn_distance = abs(right_conn_x - left_conn_x)
                         if conn_distance > 100:
@@ -180,6 +211,7 @@ class HorizontalWireExtractor:
                     wire_color=wire_spec.color
                 )
 
+
                 # CRITICAL: If this connection already exists, keep the one with spec BETWEEN the pins
                 if connection_key in self.seen_pin_pairs:
                     # Find the existing connection
@@ -202,7 +234,7 @@ class HorizontalWireExtractor:
 
         return connections
 
-    def _find_endpoint(self, point: TextElement, prefer_as_source: bool, source_x: float = None) -> Tuple[str, str]:
+    def _find_endpoint(self, point: TextElement, prefer_as_source: bool, source_x: float = None):
         """
         Find the connector/splice for a connection point.
 
@@ -212,11 +244,12 @@ class HorizontalWireExtractor:
             source_x: X coordinate of source (for junction selection)
 
         Returns:
-            Tuple of (connector_id, pin)
+            Tuple of (connector_id, pin, connector_x, connector_y) or None
+            For splices: (splice_id, '', splice_x, splice_y)
         """
         # If it's a splice point, return it directly
         if is_splice_point(point.content):
-            return (point.content, '')
+            return (point.content, '', point.x, point.y)
 
         # It's a pin - find connector above it
         conn_result = find_connector_above_pin(
@@ -226,7 +259,8 @@ class HorizontalWireExtractor:
         )
 
         if conn_result:
-            return (conn_result[0], point.content)
+            # conn_result is (connector_id, x, y)
+            return (conn_result[0], point.content, conn_result[1], conn_result[2])
 
         return None
 
@@ -238,6 +272,29 @@ class VerticalRoutingExtractor:
         self.polylines = polylines
         self.st1_paths = st1_paths
         self.text_elements = text_elements
+
+        # Calculate component bounds once (for filtering external routing wires)
+        # Only include: pins (pure digits), connector IDs, splice points
+        # Exclude: descriptive labels like "2Row RH Seat Memory Button Backlight"
+        def is_component_element(content: str) -> bool:
+            from connector_finder import is_connector_id, is_splice_point
+            return (content.isdigit() or  # Pins
+                   is_connector_id(content) or  # Connector IDs
+                   is_splice_point(content))  # Splice points (SP001, SP_CUSTOM_001)
+
+        component_xs = [e.x for e in text_elements if is_component_element(e.content)]
+        component_ys = [e.y for e in text_elements if is_component_element(e.content)]
+
+        if component_xs and component_ys:
+            # Add 20-unit margin for boundary tolerance
+            self.min_x = min(component_xs) - 20
+            self.max_x = max(component_xs) + 20
+            self.min_y = min(component_ys) - 20
+            self.max_y = max(component_ys) + 20
+        else:
+            # No bounds - allow all polylines
+            self.min_x = self.min_y = float('-inf')
+            self.max_x = self.max_y = float('inf')
         self.wire_specs = wire_specs or []
         self.horizontal_connections = horizontal_connections or []
 
@@ -394,6 +451,19 @@ class VerticalRoutingExtractor:
                     path_points.append((x, y))
                 except (ValueError, IndexError):
                     continue
+
+            # CRITICAL: Filter out bus/external routing wires that go outside diagram bounds
+            # These polylines route around the perimeter where no components exist
+            # Example: st27 polyline goes to X=43.8, but leftmost component is at X=62.1
+            # Root cause: External/bus routing wires, not actual component-to-component connections
+            goes_outside = any(
+                px < self.min_x or px > self.max_x or py < self.min_y or py > self.max_y
+                for px, py in path_points
+            )
+
+            if goes_outside:
+                # This polyline routes outside the component area - skip it
+                continue
 
             # Find nearest connection points to both endpoints
             endpoint1 = find_nearest_connection_point(start_x, start_y, self.text_elements, max_distance=100)

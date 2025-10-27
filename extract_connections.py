@@ -31,37 +31,64 @@ from extractors import (
 from output_formatter import export_to_file, print_summary_statistics
 
 
-def load_exclusions(config_file: str = 'exclusions_config.json') -> Set[Tuple[str, str]]:
+def load_exclusions(svg_file: str = None) -> Set[Tuple[str, str]]:
     """
     Load optional exclusion configuration for reference-only pins.
 
+    Supports filename-specific exclusion configs:
+    1. First tries <svg_basename>_exclusions.json (e.g., intersection_exclusions.json)
+    2. Falls back to exclusions_config.json
+    3. Returns empty set if neither exists
+
     Args:
-        config_file: Path to exclusions JSON config file
+        svg_file: Path to SVG file (optional, for filename-specific config)
 
     Returns:
         Set of (connector_id, pin) tuples to exclude
     """
-    if not os.path.exists(config_file):
-        return set()
+    config_files = []
 
-    try:
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config = json.load(f)
+    # Try filename-specific config first
+    if svg_file:
+        svg_basename = os.path.splitext(os.path.basename(svg_file))[0]
+        specific_config = f'{svg_basename}_exclusions.json'
 
-        exclusions = set()
-        for item in config.get('exclusions', []):
-            connector_id = item.get('connector_id', '')
-            pin = item.get('pin', '')
-            if connector_id:  # Pin can be empty for splice points
-                exclusions.add((connector_id, pin))
+        # Check in same directory as SVG
+        svg_dir = os.path.dirname(svg_file)
+        if svg_dir:
+            specific_config_path = os.path.join(svg_dir, specific_config)
+            config_files.append(specific_config_path)
+        else:
+            config_files.append(specific_config)
 
-        if exclusions:
-            print(f"Loaded {len(exclusions)} pin exclusions from {config_file}")
+    # Fall back to global config
+    config_files.append('exclusions_config.json')
 
-        return exclusions
-    except Exception as e:
-        print(f"Warning: Could not load exclusions config: {e}")
-        return set()
+    # Try each config file in order
+    for config_file in config_files:
+        if not os.path.exists(config_file):
+            continue
+
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+
+            exclusions = set()
+            for item in config.get('exclusions', []):
+                connector_id = item.get('connector_id', '')
+                pin = item.get('pin', '')
+                if connector_id:  # Pin can be empty for splice points
+                    exclusions.add((connector_id, pin))
+
+            if exclusions:
+                print(f"Loaded {len(exclusions)} pin exclusions from {config_file}")
+
+            return exclusions
+        except Exception as e:
+            print(f"Warning: Could not load exclusions config {config_file}: {e}")
+            continue
+
+    return set()
 
 
 def apply_exclusions(connections, exclusions: Set[Tuple[str, str]]):
@@ -109,7 +136,8 @@ def main():
     print("=" * 80)
 
     # Load optional exclusions for reference-only pins
-    exclusions = load_exclusions()
+    # Supports filename-specific configs: <svg_basename>_exclusions.json
+    exclusions = load_exclusions(svg_file)
 
     # Initialize ID generator for unlabeled splice points
     id_generator = IDGenerator()

@@ -23,8 +23,9 @@ def is_connector_id(text: str) -> bool:
     # Exclude GND labels (GND, GND1, GND2, etc.) - these are descriptions, not connectors
     if re.match(r'^GND\d*$', text):
         return False
-    # Standard connector pattern: MH3202C, FL7210, MH2FL
-    if re.match(r'^[A-Z]{2,3}\d{1,5}[A-Z]{0,3}$', text):
+    # Standard connector pattern: MH3202C, FL7210, MH2FL, MAIN557, MAIN38
+    # Support 2-4 letter prefixes to handle connectors like MAIN
+    if re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z]{0,3}$', text):
         return True
     # Ground point pattern: G22B(m), G05(z), G22_B(m), etc.
     # Allow underscores between letters

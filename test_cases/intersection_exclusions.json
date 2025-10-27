@@ -1,0 +1,19 @@
+{
+  "description": "Exclusion configuration for intersection.svg - reference connections to external diagrams",
+  "exclusions": [
+    {
+      "connector_id": "MAIN42",
+      "pin": "74",
+      "reason": "Reference connection to external diagram"
+    },
+    {
+      "connector_id": "MAIN42",
+      "pin": "75",
+      "reason": "Reference connection to external diagram"
+    }
+  ],
+  "notes": [
+    "MAIN42 pins 74-75 are internal connections within the connector detail box",
+    "These should not create connections in this diagram"
+  ]
+}
