@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 86
+**Total Connections:** 89
 
 ## All Connections (Sorted by From Connector)
 
@@ -11,6 +11,8 @@
 | MH097 | 7 | MH020 | 1 | 2.5 | YE/BU |
 | MH097 | 12 | MH020 | 17 | 2.5 | YE |
 | MH101 | 2 | MH020 | 13 | 0.35 | PU/GN |
+| MH316 | 11 | SP123 |  | 0.5 | GY/PU |
+| MH317 | 8 | SP184 |  | 0.35 | BK |
 | MH622 | 26 | SP184 |  | 0.75 | BK |
 | MH629 | 18 | G21(m) |  | 0.75 | BK |
 | RLS200 | 11 | SP_CUSTOM_006 |  | 0.5 | BK/WH |
@@ -45,7 +47,7 @@
 | RRS114 | 7 | SP_CUSTOM_009 |  | 0.75 | GN |
 | RRS114 | 8 | RRS100 | 9 | 2.5 | BK |
 | RRS114 | 9 | SP_CUSTOM_008 |  | 0.75 | PK/BK |
-| RRS200 | 8 | SP184 |  | 0.35 | BK |
+| RRS200 | 8 | RRS513 | 8 | 0.35 | PK/WH |
 | RRS200 | 11 | SP_CUSTOM_003 |  | 0.35 | BK/WH |
 | RRS262 | 2 | RRS400 | 11 | 0.35 | BK |
 | RRS263 | 2 | RRS300 | 8 | 0.35 | BK |
@@ -79,6 +81,7 @@
 | RRT14 | 3 | SP323 |  | 0.35 | BK |
 | RRT15 | 1 | SP305 |  | 0.35 | GY/WH |
 | RRT15 | 3 | SP323 |  | 0.35 | BK |
+| RRT626 | 15 | SP305 |  | 0.35 | GY/WH |
 | SP113 |  | RR622 | 26 | 0.75 | BK |
 | SP123 |  | MH317 | 11 | 0.35 | GY/PU |
 | SP184 |  | MH630 | 18 | 0.75 | BK |
@@ -114,6 +117,18 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 2 | MH020 | 13 | 0.35 | PU/GN |
+
+### MH316 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 11 | SP123 |  | 0.5 | GY/PU |
+
+### MH317 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 8 | SP184 |  | 0.35 | BK |
 
 ### MH622 (1 connections)
 
@@ -203,7 +218,7 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 8 | SP184 |  | 0.35 | BK |
+| 8 | RRS513 | 8 | 0.35 | PK/WH |
 | 11 | SP_CUSTOM_003 |  | 0.35 | BK/WH |
 
 ### RRS262 (1 connections)
@@ -307,6 +322,12 @@
 |----------|-----|--------|---------|-------|
 | 1 | SP305 |  | 0.35 | GY/WH |
 | 3 | SP323 |  | 0.35 | BK |
+
+### RRT626 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 15 | SP305 |  | 0.35 | GY/WH |
 
 ### SP113 (1 connections)
 
