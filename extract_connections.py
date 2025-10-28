@@ -31,20 +31,22 @@ from extractors import (
 from output_formatter import export_to_file, print_summary_statistics
 
 
-def load_exclusions(svg_file: str = None) -> Set[Tuple[str, str]]:
+def load_exclusions(svg_file: str = None) -> Tuple[Set[Tuple[str, str]], Set[Tuple[str, str, str, str]]]:
     """
-    Load optional exclusion configuration for reference-only pins.
+    Load optional exclusion configuration for reference-only pins and specific connections.
 
     Supports filename-specific exclusion configs:
     1. First tries <svg_basename>_exclusions.json (e.g., intersection_exclusions.json)
     2. Falls back to exclusions_config.json
-    3. Returns empty set if neither exists
+    3. Returns empty sets if neither exists
 
     Args:
         svg_file: Path to SVG file (optional, for filename-specific config)
 
     Returns:
-        Set of (connector_id, pin) tuples to exclude
+        Tuple of:
+        - Set of (connector_id, pin) tuples to exclude (excludes ALL connections for this pin)
+        - Set of (from_id, from_pin, to_id, to_pin) tuples to exclude (excludes specific connection pairs)
     """
     config_files = []
 
@@ -73,54 +75,75 @@ def load_exclusions(svg_file: str = None) -> Set[Tuple[str, str]]:
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
 
-            exclusions = set()
+            # Load pin exclusions (excludes ALL connections for this pin)
+            pin_exclusions = set()
             for item in config.get('exclusions', []):
                 connector_id = item.get('connector_id', '')
                 pin = item.get('pin', '')
                 if connector_id:  # Pin can be empty for splice points
-                    exclusions.add((connector_id, pin))
+                    pin_exclusions.add((connector_id, pin))
 
-            if exclusions:
-                print(f"Loaded {len(exclusions)} pin exclusions from {config_file}")
+            # Load connection pair exclusions (excludes specific connection pairs)
+            connection_exclusions = set()
+            for item in config.get('connection_exclusions', []):
+                from_id = item.get('from_connector', '')
+                from_pin = item.get('from_pin', '')
+                to_id = item.get('to_connector', '')
+                to_pin = item.get('to_pin', '')
+                if from_id and to_id:
+                    connection_exclusions.add((from_id, from_pin, to_id, to_pin))
 
-            return exclusions
+            if pin_exclusions or connection_exclusions:
+                print(f"Loaded {len(pin_exclusions)} pin exclusions and {len(connection_exclusions)} connection pair exclusions from {config_file}")
+
+            return pin_exclusions, connection_exclusions
         except Exception as e:
             print(f"Warning: Could not load exclusions config {config_file}: {e}")
             continue
 
-    return set()
+    return set(), set()
 
 
-def apply_exclusions(connections, exclusions: Set[Tuple[str, str]]):
+def apply_exclusions(connections, pin_exclusions: Set[Tuple[str, str]], connection_exclusions: Set[Tuple[str, str, str, str]]):
     """
-    Filter out connections involving excluded pins.
+    Filter out connections involving excluded pins or specific connection pairs.
 
     Args:
         connections: List of Connection objects
-        exclusions: Set of (connector_id, pin) tuples to exclude
+        pin_exclusions: Set of (connector_id, pin) tuples to exclude (excludes ALL connections for this pin)
+        connection_exclusions: Set of (from_id, from_pin, to_id, to_pin) tuples to exclude (excludes specific pairs)
 
     Returns:
         Filtered list of connections
     """
-    if not exclusions:
+    if not pin_exclusions and not connection_exclusions:
         return connections
 
     filtered = []
-    excluded_count = 0
+    pin_excluded_count = 0
+    connection_excluded_count = 0
 
     for conn in connections:
-        # Check if either endpoint is in exclusion list
+        # Check if either endpoint is in pin exclusion list
         from_key = (conn.from_id, conn.from_pin)
         to_key = (conn.to_id, conn.to_pin)
 
-        if from_key in exclusions or to_key in exclusions:
-            excluded_count += 1
+        if from_key in pin_exclusions or to_key in pin_exclusions:
+            pin_excluded_count += 1
+            continue
+
+        # Check if this specific connection pair is excluded
+        conn_key = (conn.from_id, conn.from_pin, conn.to_id, conn.to_pin)
+        if conn_key in connection_exclusions:
+            connection_excluded_count += 1
             continue
 
         filtered.append(conn)
 
-    if excluded_count > 0:
-        print(f"Excluded {excluded_count} connections involving reference-only pins")
+    if pin_excluded_count > 0:
+        print(f"Excluded {pin_excluded_count} connections involving excluded pins")
+    if connection_excluded_count > 0:
+        print(f"Excluded {connection_excluded_count} specific connection pairs")
 
     return filtered
 
@@ -135,9 +158,9 @@ def main():
     print("Circuit Diagram Connection Extractor")
     print("=" * 80)
 
-    # Load optional exclusions for reference-only pins
+    # Load optional exclusions for reference-only pins and specific connection pairs
     # Supports filename-specific configs: <svg_basename>_exclusions.json
-    exclusions = load_exclusions(svg_file)
+    pin_exclusions, connection_exclusions = load_exclusions(svg_file)
 
     # Initialize ID generator for unlabeled splice points
     id_generator = IDGenerator()
@@ -201,8 +224,8 @@ def main():
     combined = horizontal_connections + routing_connections + ground_connections
     all_connections = deduplicate_connections(combined)
 
-    # Step 7b: Apply exclusions for reference-only pins
-    all_connections = apply_exclusions(all_connections, exclusions)
+    # Step 7b: Apply exclusions for reference-only pins and specific connection pairs
+    all_connections = apply_exclusions(all_connections, pin_exclusions, connection_exclusions)
 
     print("\n" + "=" * 80)
     print(f"Total connections: {len(all_connections)}")

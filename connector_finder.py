@@ -90,7 +90,8 @@ def find_connector_above_pin(
     pin_y: float,
     text_elements: List[TextElement],
     prefer_as_source: bool = False,
-    source_x: float = None
+    source_x: float = None,
+    destination_x: float = None
 ) -> Optional[Tuple[str, float, float]]:
     """
     Find the closest connector directly above a pin.
@@ -100,7 +101,8 @@ def find_connector_above_pin(
         text_elements: List of all text elements
         prefer_as_source: If True, for mirrored junction pairs, prefer the variant where shorter prefix is LAST
                          If False, for mirrored junction pairs, prefer the variant where shorter prefix is FIRST
-        source_x: X coordinate of source (for junction selection)
+        source_x: X coordinate of source (for junction selection when this pin is destination)
+        destination_x: X coordinate of destination (for picking junction closer to destination when this pin is source)
 
     Returns:
         Tuple of (connector_id, x, y) or None if no connector found
@@ -191,6 +193,20 @@ def find_connector_above_pin(
     # Special handling for junction pairs
     if has_junction_pair and len(junction_connectors) >= 2:
         junc1, junc2 = junction_connectors[0], junction_connectors[1]
+
+        # If destination_x is provided (this pin is source), pick junction CLOSER to destination
+        if destination_x is not None and prefer_as_source:
+            junc1_x, junc2_x = junc1[4], junc2[4]
+            dist1_to_dest = abs(junc1_x - destination_x)
+            dist2_to_dest = abs(junc2_x - destination_x)
+
+            # Pick the junction closer to the destination
+            if dist1_to_dest < dist2_to_dest:
+                conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+            else:
+                conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+
+            return (conn_id, conn_x, conn_y)
 
         # If we know the source X position, pick the junction that's between source and destination
         if source_x is not None and not prefer_as_source:
@@ -295,7 +311,9 @@ def find_nearest_connection_point(
     target_x: float,
     target_y: float,
     text_elements: List[TextElement],
-    max_distance: float = 100
+    max_distance: float = 100,
+    prefer_connector_near_target: bool = True,
+    horizontal_connections: List = None
 ) -> Optional[ConnectionPoint]:
     """
     Find the nearest pin or splice point to a target coordinate.
@@ -306,6 +324,9 @@ def find_nearest_connection_point(
         target_x, target_y: Target coordinates
         text_elements: List of all text elements
         max_distance: Maximum distance to search
+        prefer_connector_near_target: If True and multiple connectors are above a pin,
+                                      prefer the connector closest to target (for polylines)
+        horizontal_connections: List of horizontal wire connections (to filter out pins already in use)
 
     Returns:
         ConnectionPoint or None
@@ -330,14 +351,59 @@ def find_nearest_connection_point(
                     nearest = ConnectionPoint(elem.content, '', elem.x, elem.y)
                 else:
                     # It's a pin number - find the connector above it
-                    connector_result = find_connector_above_pin(elem.x, elem.y, text_elements)
-                    if connector_result:
-                        nearest = ConnectionPoint(
-                            connector_result[0],
-                            elem.content,
-                            elem.x,
-                            elem.y
-                        )
+                    # CRITICAL: When multiple connectors are above this pin (e.g., MH316 and RLS200),
+                    # prefer the connector that's CLOSER TO THE TARGET (polyline endpoint)
+                    # This handles cases where the wire routes to a specific connector position
+                    if prefer_connector_near_target:
+                        # Find all connectors above this pin
+                        connectors_above = find_all_connectors_above_pin(elem.x, elem.y, text_elements)
+                        if connectors_above:
+                            # CRITICAL: Prefer connectors WITHOUT existing horizontal wires
+                            # This handles shared pins where one connector is already in use for horizontal wiring
+                            # BUT: Only filter if multiple connectors are at SIMILAR Y distances
+                            # If one is MUCH closer (> 20 Y units difference), rely on deduplication instead
+                            if horizontal_connections and len(connectors_above) > 1:
+                                # Check Y distance range among CLOSEST TWO connectors
+                                # connectors_above is already sorted by Y distance (from find_all_connectors_above_pin)
+                                # We only care if the two closest are at similar distances
+                                closest_two_y_dists = [connectors_above[0][0], connectors_above[1][0]]
+                                y_dist_range = closest_two_y_dists[1] - closest_two_y_dists[0]
+
+                                # Only filter if the TWO CLOSEST connectors are at similar distances (< 20 Y units apart)
+                                # At >= 20 Y apart, one is much closer - deduplication handles it
+                                if y_dist_range < 20:
+                                    # Get set of pins that have horizontal wires as sources
+                                    pins_with_horizontal = set()
+                                    for conn in horizontal_connections:
+                                        pins_with_horizontal.add((conn.from_id, conn.from_pin))
+
+                                    # Separate connectors into those with/without horizontal wires
+                                    connectors_without_horizontal = [c for c in connectors_above
+                                                                    if (c[1], elem.content) not in pins_with_horizontal]
+
+                                    # Prefer connectors without horizontal wires, but allow those with if no alternatives
+                                    if connectors_without_horizontal:
+                                        connectors_above = connectors_without_horizontal
+
+                            # Pick the connector closest to the target (polyline endpoint)
+                            closest_connector = min(connectors_above,
+                                                   key=lambda c: math.sqrt((c[2] - target_x)**2 + (c[3] - target_y)**2))
+                            nearest = ConnectionPoint(
+                                closest_connector[1],  # connector_id
+                                elem.content,          # pin
+                                elem.x,
+                                elem.y
+                            )
+                    else:
+                        # Use standard logic (connector directly above pin)
+                        connector_result = find_connector_above_pin(elem.x, elem.y, text_elements)
+                        if connector_result:
+                            nearest = ConnectionPoint(
+                                connector_result[0],
+                                elem.content,
+                                elem.x,
+                                elem.y
+                            )
 
     return nearest
 

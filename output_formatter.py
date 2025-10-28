@@ -25,10 +25,8 @@ def format_markdown_table(connections: List[Connection]) -> str:
     lines.append("|------|----------|-----|--------|---------|-------|")
 
     for conn in sorted_connections:
-        lines.append(
-            f"| {conn.from_id} | {conn.from_pin} | {conn.to_id} | {conn.to_pin} | "
-            f"{conn.wire_dm} | {conn.wire_color} |"
-        )
+        line = f"| {conn.from_id} | {conn.from_pin} | {conn.to_id} | {conn.to_pin} | {conn.wire_dm} | {conn.wire_color} |"
+        lines.append(line)
 
     return "\n".join(lines)
 

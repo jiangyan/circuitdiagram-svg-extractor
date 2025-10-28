@@ -44,7 +44,7 @@ class HorizontalWireExtractor:
                 wire_lines[line_key] = []
             wire_lines[line_key].append(wire_spec)
 
-        # Process each horizontal line
+        # Process each horizontal line (or group of lines with specs at similar Y)
         for line_y, specs_on_line in wire_lines.items():
             # CRITICAL: Use the wire spec that is CLOSEST in Y to the connection points
             # Wire specs are typically positioned directly above the wires they describe
@@ -53,7 +53,9 @@ class HorizontalWireExtractor:
             for elem in self.text_elements:
                 # IMPORTANT: Check if element is within ±10 of ANY spec in the group
                 # (not just the first spec, since specs in a group can have different Y positions)
-                if elem.content.isdigit() or is_splice_point(elem.content):
+                # Include: pins (digits), splice points, AND ground connectors (with parentheses)
+                is_ground_connector = is_connector_id(elem.content) and '(' in elem.content
+                if elem.content.isdigit() or is_splice_point(elem.content) or is_ground_connector:
                     for spec in specs_on_line:
                         if abs(elem.y - spec.y) < 10:
                             connection_points.append(elem)
@@ -73,189 +75,240 @@ class HorizontalWireExtractor:
 
                 if y_range > 10:
                     # Pins are spread across > 10 Y units - likely from different horizontal lines
-                    # Keep only pins within ±10 of the median Y (most common line)
-                    median_y = sorted(y_values)[len(y_values) // 2]
-                    connection_points = [p for p in connection_points if abs(p.y - median_y) <= 10]
+                    # Cluster points into groups within ±3 Y units of each other
+                    # Process EACH cluster separately (multiple horizontal wires in same spec group)
+                    connection_points.sort(key=lambda p: p.y)
 
-            if len(connection_points) < 2:
-                # After filtering, need at least 2 connection points
-                continue
+                    clusters = []
+                    current_cluster = [connection_points[0]]
 
-            # Sort connection points by X coordinate (left to right)
-            connection_points.sort(key=lambda p: p.x)
+                    for i in range(1, len(connection_points)):
+                        # If this point is within 3 units of the current cluster's range, add it
+                        cluster_y_min = min(p.y for p in current_cluster)
+                        cluster_y_max = max(p.y for p in current_cluster)
 
-            # CRITICAL: Remove duplicate X positions (pins from different horizontal lines)
-            # Keep the pin that is closest in Y to any spec in this group
-            unique_x_points = []
-            i = 0
-            while i < len(connection_points):
-                current_x = connection_points[i].x
-                # Collect all points at this X position (within 0.5 units)
-                points_at_x = [connection_points[i]]
-                j = i + 1
-                while j < len(connection_points) and abs(connection_points[j].x - current_x) < 0.5:
-                    points_at_x.append(connection_points[j])
-                    j += 1
+                        if abs(connection_points[i].y - cluster_y_min) <= 3 or abs(connection_points[i].y - cluster_y_max) <= 3:
+                            current_cluster.append(connection_points[i])
+                        else:
+                            # Start new cluster
+                            clusters.append(current_cluster)
+                            current_cluster = [connection_points[i]]
 
-                # If multiple points at same X, pick the one closest in Y to any spec
-                if len(points_at_x) > 1:
-                    best_point = min(points_at_x, key=lambda p: min(abs(p.y - s.y) for s in specs_on_line))
-                    unique_x_points.append(best_point)
+                    clusters.append(current_cluster)
+
+                    # Process EACH cluster with at least 2 points
+                    connection_point_clusters = [c for c in clusters if len(c) >= 2]
                 else:
-                    unique_x_points.append(points_at_x[0])
+                    # All points are close together - process as one cluster
+                    connection_point_clusters = [connection_points]
 
-                i = j
+            else:
+                connection_point_clusters = [connection_points]
 
-            connection_points = unique_x_points
-
-
-            # Create connections between ALL ADJACENT pairs of connection points on this line
-            # This handles: pin→splice, splice→splice, splice→pin, pin→pin
-            for i in range(len(connection_points) - 1):
-                left_point = connection_points[i]
-                right_point = connection_points[i + 1]
-
-                # CRITICAL: Select wire spec FOR THIS SPECIFIC PAIR
-                # 1. Find specs BETWEEN the two points (in X)
-                # 2. Of those, pick the one closest in Y to the pair's average Y
-                pair_avg_y = (left_point.y + right_point.y) / 2
-                between_specs = [
-                    s for s in specs_on_line
-                    if left_point.x < s.x < right_point.x
-                ]
-
-                if between_specs:
-                    # Use spec between the points, closest in Y
-                    wire_spec = min(between_specs, key=lambda s: abs(s.y - pair_avg_y))
-                else:
-                    # No spec between - use closest in Y to the pair
-                    wire_spec = min(specs_on_line, key=lambda s: abs(s.y - pair_avg_y))
-
-                # Find entities for both connection points
-                # Left is source
-                left_endpoint = self._find_endpoint(left_point, prefer_as_source=True, source_x=None)
-                # Right is destination - pass source X to help with junction selection
-                right_endpoint = self._find_endpoint(right_point, prefer_as_source=False, source_x=left_point.x)
-
-                if not left_endpoint or not right_endpoint:
+            # Process each cluster (horizontal line)
+            for connection_points in connection_point_clusters:
+                if len(connection_points) < 2:
+                    # Need at least 2 connection points
                     continue
 
-                left_id, left_pin, left_conn_x, left_conn_y = left_endpoint
-                right_id, right_pin, right_conn_x, right_conn_y = right_endpoint
+                # Sort connection points by X coordinate (left to right)
+                connection_points.sort(key=lambda p: p.x)
 
-                # Skip if pins are too far apart horizontally (>220 units)
-                # UNLESS there's a wire spec between them (which indicates a valid long-distance connection)
-                x_distance = abs(right_point.x - left_point.x)
-                if x_distance > 220:
-                    # Check if there's a spec between the pins
-                    has_spec_between_pins = any(
-                        left_point.x < s.x < right_point.x
-                        for s in specs_on_line
-                    )
-                    if not has_spec_between_pins:
-                        # No spec between pins - skip this connection
+                # CRITICAL: Remove duplicate X positions (pins from different horizontal lines)
+                # Keep the pin that is closest in Y to any spec in this group
+                unique_x_points = []
+                i = 0
+                while i < len(connection_points):
+                    current_x = connection_points[i].x
+                    # Collect all points at this X position (within 0.5 units)
+                    points_at_x = [connection_points[i]]
+                    j = i + 1
+                    while j < len(connection_points) and abs(connection_points[j].x - current_x) < 0.5:
+                        points_at_x.append(connection_points[j])
+                        j += 1
+
+                    # If multiple points at same X, pick the one closest in Y to any spec
+                    if len(points_at_x) > 1:
+                        best_point = min(points_at_x, key=lambda p: min(abs(p.y - s.y) for s in specs_on_line))
+                        unique_x_points.append(best_point)
+                    else:
+                        unique_x_points.append(points_at_x[0])
+
+                    i = j
+
+                connection_points = unique_x_points
+
+
+                # Create connections between ALL ADJACENT pairs of connection points on this line
+                # This handles: pin→splice, splice→splice, splice→pin, pin→pin
+                for i in range(len(connection_points) - 1):
+                    left_point = connection_points[i]
+                    right_point = connection_points[i + 1]
+
+                    # CRITICAL: Select wire spec FOR THIS SPECIFIC PAIR
+                    # 1. Find specs BETWEEN the two points (in X)
+                    # 2. Of those, pick the one closest in Y to the pair's average Y
+                    pair_avg_y = (left_point.y + right_point.y) / 2
+                    between_specs = [
+                        s for s in specs_on_line
+                        if left_point.x < s.x < right_point.x
+                    ]
+
+                    if between_specs:
+                        # Use spec between the points, closest in Y
+                        wire_spec = min(between_specs, key=lambda s: abs(s.y - pair_avg_y))
+                    else:
+                        # No spec between - use closest in Y to the pair
+                        wire_spec = min(specs_on_line, key=lambda s: abs(s.y - pair_avg_y))
+
+                    # CRITICAL: Check if both points are on the same horizontal wire
+                    # If one point is far from the wire spec (e.g., 6 units) and the other is very close (e.g., 0.1 units),
+                    # they're likely on DIFFERENT horizontal wires at slightly different Y levels
+                    # Example: MAIN42 pin 7 (dist=6.16) vs SP_CUSTOM_006 (dist=0.11) - different wires!
+                    left_dist = abs(left_point.y - wire_spec.y)
+                    right_dist = abs(right_point.y - wire_spec.y)
+                    dist_diff = abs(left_dist - right_dist)
+
+                    # If distance difference > 5 units, they're on different wires
+                    # This filters: one at ~6 units, one at ~0.1 units (diff=5.9)
+                    # But keeps: both at ~5 units (diff=0), or pin at ~5.4 + ground at ~1.1 (diff=4.3)
+                    if dist_diff > 5:
+                        # Points are at very different Y distances from spec - different wires
                         continue
 
-                # Skip self-connections (same connector, different pins on same line)
-                if left_id == right_id and left_pin != right_pin and not is_splice_point(left_id):
-                    continue
+                    # Find entities for both connection points
+                    # Left is source - pass destination X to pick junction closer to destination
+                    left_endpoint = self._find_endpoint(left_point, prefer_as_source=True, source_x=None, destination_x=right_point.x)
+                    # Right is destination - pass source X to help with junction selection
+                    right_endpoint = self._find_endpoint(right_point, prefer_as_source=False, source_x=left_point.x)
 
-                # CRITICAL: Skip connections that bypass splice points
-                # If there's a splice point BETWEEN left and right, don't create a direct connection
-                # Example: If we have A → SP1 → SP2 on same line, create A→SP1 and SP1→SP2, but NOT A→SP2
-                # This is the "when it arrives SP, done" logic
-                #
-                # Two cases:
-                # 1. pin → pin: skip if splice between
-                # 2. pin → splice: skip if another splice between
-                if not is_splice_point(left_id):
-                    # Left is a pin/connector, check if there's a splice between left and right
-                    has_splice_between = any(
-                        is_splice_point(point.content) and left_point.x < point.x < right_point.x
-                        for point in connection_points
-                    )
-                    if has_splice_between:
-                        # There's a splice between - skip this direct connection
+                    if not left_endpoint or not right_endpoint:
                         continue
 
-                # CRITICAL: Skip connections between pins from different, distant connectors
-                # This prevents false connections between separate modules on the same line
-                # Use connector coordinates from _find_endpoint (already found by find_connector_above_pin)
-                if not is_splice_point(left_id) and not is_splice_point(right_id) and left_id != right_id:
-                    # Check if connectors are far apart (>100 units)
-                    if left_conn_x and right_conn_x:
-                        conn_distance = abs(right_conn_x - left_conn_x)
-                        if conn_distance > 100:
-                            # Check if there's a wire spec between the connectors
-                            # If yes, it's likely a valid inter-module connection
-                            has_spec_between_connectors = any(
-                                min(left_conn_x, right_conn_x) < s.x < max(left_conn_x, right_conn_x)
-                                for s in specs_on_line
-                            )
-                            if not has_spec_between_connectors:
-                                # No wire spec between connectors - skip this connection
-                                continue
+                    left_id, left_pin, left_conn_x, left_conn_y = left_endpoint
+                    right_id, right_pin, right_conn_x, right_conn_y = right_endpoint
 
-                # Create a unique key for this connection
-                connection_key = tuple(sorted([
-                    (left_id, left_pin, left_point.x, left_point.y),
-                    (right_id, right_pin, right_point.x, right_point.y)
-                ]))
+                    # Skip if pins are too far apart horizontally (>220 units)
+                    # UNLESS there's a wire spec between them (which indicates a valid long-distance connection)
+                    x_distance = abs(right_point.x - left_point.x)
+                    if x_distance > 220:
+                        # Check if there's a spec between the pins
+                        has_spec_between_pins = any(
+                            left_point.x < s.x < right_point.x
+                            for s in specs_on_line
+                        )
+                        if not has_spec_between_pins:
+                            # No spec between pins - skip this connection
+                            continue
 
-                connection = Connection(
-                    from_id=left_id,
-                    from_pin=left_pin,
-                    to_id=right_id,
-                    to_pin=right_pin,
-                    wire_dm=wire_spec.diameter,
-                    wire_color=wire_spec.color
-                )
+                    # Skip self-connections (same connector, different pins on same line)
+                    if left_id == right_id and left_pin != right_pin and not is_splice_point(left_id):
+                        continue
+
+                    # CRITICAL: Skip connections that bypass splice points
+                    # If there's a splice point BETWEEN left and right, don't create a direct connection
+                    # Example: If we have A → SP1 → SP2 on same line, create A→SP1 and SP1→SP2, but NOT A→SP2
+                    # This is the "when it arrives SP, done" logic
+                    #
+                    # Two cases:
+                    # 1. pin → pin: skip if splice between
+                    # 2. pin → splice: skip if another splice between
+                    if not is_splice_point(left_id):
+                        # Left is a pin/connector, check if there's a splice between left and right
+                        has_splice_between = any(
+                            is_splice_point(point.content) and left_point.x < point.x < right_point.x
+                            for point in connection_points
+                        )
+                        if has_splice_between:
+                            # There's a splice between - skip this direct connection
+                            continue
+
+                    # CRITICAL: Skip connections between pins from different, distant connectors
+                    # This prevents false connections between separate modules on the same line
+                    # Use connector coordinates from _find_endpoint (already found by find_connector_above_pin)
+                    if not is_splice_point(left_id) and not is_splice_point(right_id) and left_id != right_id:
+                        # Check if connectors are far apart (>100 units)
+                        if left_conn_x and right_conn_x:
+                            conn_distance = abs(right_conn_x - left_conn_x)
+                            if conn_distance > 100:
+                                # Check if there's a wire spec between the connectors
+                                # If yes, it's likely a valid inter-module connection
+                                has_spec_between_connectors = any(
+                                    min(left_conn_x, right_conn_x) < s.x < max(left_conn_x, right_conn_x)
+                                    for s in specs_on_line
+                                )
+                                if not has_spec_between_connectors:
+                                    # No wire spec between connectors - skip this connection
+                                    continue
+
+                    # Create a unique key for this connection
+                    connection_key = tuple(sorted([
+                        (left_id, left_pin, left_point.x, left_point.y),
+                        (right_id, right_pin, right_point.x, right_point.y)
+                    ]))
+
+                    connection = Connection(
+                        from_id=left_id,
+                        from_pin=left_pin,
+                        to_id=right_id,
+                        to_pin=right_pin,
+                        wire_dm=wire_spec.diameter,
+                        wire_color=wire_spec.color
+                    )
 
 
-                # CRITICAL: If this connection already exists, keep the one with spec BETWEEN the pins
-                if connection_key in self.seen_pin_pairs:
-                    # Find the existing connection
-                    existing_conn_idx = None
-                    for idx, conn in enumerate(connections):
-                        if (sorted([(conn.from_id, conn.from_pin, left_point.x, left_point.y),
-                                    (conn.to_id, conn.to_pin, right_point.x, right_point.y)]) == list(connection_key)):
-                            existing_conn_idx = idx
-                            break
+                    # CRITICAL: If this connection already exists, keep the one with spec BETWEEN the pins
+                    if connection_key in self.seen_pin_pairs:
+                        # Find the existing connection
+                        existing_conn_idx = None
+                        for idx, conn in enumerate(connections):
+                            if (sorted([(conn.from_id, conn.from_pin, left_point.x, left_point.y),
+                                        (conn.to_id, conn.to_pin, right_point.x, right_point.y)]) == list(connection_key)):
+                                existing_conn_idx = idx
+                                break
 
-                    # If we found the existing connection, check if new one has spec between
-                    if existing_conn_idx is not None and len(between_specs) > 0:
-                        # New connection has spec between - replace the old one
-                        connections[existing_conn_idx] = connection
-                    # Otherwise skip (keep the existing connection)
-                    continue
+                        # If we found the existing connection, check if new one has spec between
+                        if existing_conn_idx is not None and len(between_specs) > 0:
+                            # New connection has spec between - replace the old one
+                            connections[existing_conn_idx] = connection
+                        # Otherwise skip (keep the existing connection)
+                        continue
 
-                self.seen_pin_pairs.add(connection_key)
-                connections.append(connection)
+                    self.seen_pin_pairs.add(connection_key)
+                    connections.append(connection)
 
         return connections
 
-    def _find_endpoint(self, point: TextElement, prefer_as_source: bool, source_x: float = None):
+    def _find_endpoint(self, point: TextElement, prefer_as_source: bool, source_x: float = None, destination_x: float = None):
         """
         Find the connector/splice for a connection point.
 
         Args:
-            point: The connection point (pin or splice)
+            point: The connection point (pin, splice, or ground connector)
             prefer_as_source: Whether to prefer FL2* for junctions
-            source_x: X coordinate of source (for junction selection)
+            source_x: X coordinate of source (for junction selection when this point is destination)
+            destination_x: X coordinate of destination (for picking junction closer to destination)
 
         Returns:
             Tuple of (connector_id, pin, connector_x, connector_y) or None
             For splices: (splice_id, '', splice_x, splice_y)
+            For ground connectors: (ground_id, '', ground_x, ground_y)
         """
         # If it's a splice point, return it directly
         if is_splice_point(point.content):
             return (point.content, '', point.x, point.y)
 
+        # If it's a ground connector, return it directly (ground connector is the endpoint itself)
+        if is_connector_id(point.content) and '(' in point.content:
+            return (point.content, '', point.x, point.y)
+
         # It's a pin - find connector above it
+        # If destination_x is provided, use it to pick the junction closer to the destination
         conn_result = find_connector_above_pin(
             point.x, point.y, self.text_elements,
             prefer_as_source=prefer_as_source,
-            source_x=source_x
+            source_x=source_x,
+            destination_x=destination_x
         )
 
         if conn_result:
@@ -456,18 +509,25 @@ class VerticalRoutingExtractor:
             # These polylines route around the perimeter where no components exist
             # Example: st27 polyline goes to X=43.8, but leftmost component is at X=62.1
             # Root cause: External/bus routing wires, not actual component-to-component connections
-            goes_outside = any(
-                px < self.min_x or px > self.max_x or py < self.min_y or py > self.max_y
-                for px, py in path_points
-            )
+            #
+            # IMPORTANT: Only check ENDPOINTS, not intermediate routing points
+            # Intermediate points can legitimately go outside to route around components
+            # Only filter if BOTH endpoints are outside bounds (true external routing)
+            start_outside = (start_x < self.min_x or start_x > self.max_x or
+                           start_y < self.min_y or start_y > self.max_y)
+            end_outside = (end_x < self.min_x or end_x > self.max_x or
+                         end_y < self.min_y or end_y > self.max_y)
 
-            if goes_outside:
-                # This polyline routes outside the component area - skip it
+            if start_outside and end_outside:
+                # Both endpoints outside - this is external bus routing
                 continue
 
             # Find nearest connection points to both endpoints
-            endpoint1 = find_nearest_connection_point(start_x, start_y, self.text_elements, max_distance=100)
-            endpoint2 = find_nearest_connection_point(end_x, end_y, self.text_elements, max_distance=100)
+            # Pass horizontal_connections to filter out pins already in use
+            endpoint1 = find_nearest_connection_point(start_x, start_y, self.text_elements, max_distance=100,
+                                                     horizontal_connections=self.horizontal_connections)
+            endpoint2 = find_nearest_connection_point(end_x, end_y, self.text_elements, max_distance=100,
+                                                     horizontal_connections=self.horizontal_connections)
 
             if not endpoint1 or not endpoint2:
                 continue
@@ -523,19 +583,30 @@ class VerticalRoutingExtractor:
                                 is_on_segment = True
 
                         if is_on_segment:
-                            splice_found = find_nearest_connection_point(sx, sy, self.text_elements, max_distance=20)
-                            if splice_found and is_splice_point(splice_found.connector_id):
+                            candidate_splice = find_nearest_connection_point(sx, sy, self.text_elements, max_distance=20)
+                            # CRITICAL: Don't treat endpoints as intermediate splices
+                            if candidate_splice and is_splice_point(candidate_splice.connector_id):
+                                # Skip if this splice is one of the endpoints
+                                if (candidate_splice.connector_id == endpoint1.connector_id and
+                                    candidate_splice.pin == endpoint1.pin):
+                                    continue
+                                if (candidate_splice.connector_id == endpoint2.connector_id and
+                                    candidate_splice.pin == endpoint2.pin):
+                                    continue
+                                # Not an endpoint - use it
+                                splice_found = candidate_splice
                                 break
 
                     if splice_found:
                         break
 
                 # If no splice found on segments, check vertices (for T-junctions)
-                # But use strict distance threshold to avoid false matches
+                # CRITICAL: Use STRICT distance threshold (20 units) to avoid false matches
+                # Long routing polylines can pass near other splices that aren't part of the path
                 if not splice_found:
                     for i in range(1, len(parsed_points) - 1):  # Skip first and last
                         px, py = parsed_points[i]
-                        intermediate = find_nearest_connection_point(px, py, self.text_elements, max_distance=100)
+                        intermediate = find_nearest_connection_point(px, py, self.text_elements, max_distance=20)
                         if intermediate and is_splice_point(intermediate.connector_id):
                             splice_found = intermediate
                             break
@@ -611,10 +682,16 @@ class VerticalRoutingExtractor:
                 source_endpoint.pin == dest_endpoint.pin):
                 continue
 
-            # Skip if source pin already has a horizontal wire connection
-            # (Horizontal wires take precedence over routing paths)
-            source_key = (source_endpoint.connector_id, source_endpoint.pin)
-            if source_key in self.pins_with_horizontal_wires:
+            # Skip if this SPECIFIC connection already exists in horizontal wires
+            # (Horizontal wires take precedence, but a pin can have multiple connections to different destinations)
+            connection_already_exists = any(
+                (conn.from_id == source_endpoint.connector_id and conn.from_pin == source_endpoint.pin and
+                 conn.to_id == dest_endpoint.connector_id and conn.to_pin == dest_endpoint.pin) or
+                (conn.from_id == dest_endpoint.connector_id and conn.from_pin == dest_endpoint.pin and
+                 conn.to_id == source_endpoint.connector_id and conn.to_pin == source_endpoint.pin)
+                for conn in self.horizontal_connections
+            )
+            if connection_already_exists:
                 continue
 
             # Skip routing connections between two pass-through splice points

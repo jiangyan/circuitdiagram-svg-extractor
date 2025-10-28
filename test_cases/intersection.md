@@ -1,19 +1,20 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 30
+**Total Connections:** 32
 
 ## All Connections (Sorted by From Connector)
 
 | From | From Pin | To | To Pin | Wire DM | Color |
 |------|----------|-----|--------|---------|-------|
-| MAIN42 | 7 | SP_CUSTOM_006 |  | 6.0 | PU |
 | MAIN42 | 73 | MAIN42 | 7 | 6.0 | PU |
 | MAIN42 | 78 | MAIN557 | 29 | 0.5 | GY/PU |
 | MAIN557 | 11 | MAIN38 | 18 | 0.35 | YE/GY |
 | MAIN557 | 12 | MAIN38 | 16 | 0.35 | BU/PU |
 | MAIN557 | 13 | MAIN38 | 19 | 0.35 | PU |
 | MAIN557 | 30 | MAIN38 | 8 | 0.35 | PU/RD |
+| MAIN557 | 32 | G502A(m) |  | 0.5 | BK |
 | RS800 | 29 | SP_CUSTOM_001 |  | 0.5 | RD/BK |
+| RS800 | 32 | SP_CUSTOM_004 |  | 0.35 | BK/WH |
 | RS808 | 2 | MAIN557 | 30 | 0.35 | GN/BU |
 | RS808 | 12 | SP_CUSTOM_004 |  | 0.35 | BK/WH |
 | RS809 | 6 | MAIN557 | 12 | 0.35 | GN/GY |
@@ -21,7 +22,7 @@
 | RS856 | 1 | MAIN557 | 11 | 0.35 | GN/YE |
 | RS856 | 3 | SP_CUSTOM_007 |  | 0.35 | BK/WH |
 | RS857 | 1 | RS800 | 13 | 0.35 | YE |
-| RS857 | 3 | SP_CUSTOM_004 |  | 0.35 | BK/WH |
+| RS857 | 3 | SP_CUSTOM_007 |  | 0.35 | BK/WH |
 | RS901 | 4 | RS904 | 2 | 0.35 | BK/WH |
 | RS904 | 1 | RS901 | 6 | 0.35 | WH |
 | RS904 | 3 | SP_CUSTOM_003 |  | 0.35 | YE/WH |
@@ -36,18 +37,18 @@
 | SP_CUSTOM_005 |  | RS901 | 4 | 0.5 | RD/BK |
 | SP_CUSTOM_005 |  | RS857 | 2 | 0.5 | RD/BK |
 | SP_CUSTOM_006 |  | RS856 | 2 | 0.5 | RD/BK |
+| SP_CUSTOM_007 |  | SP_CUSTOM_004 |  | 0.35 | BK/WH |
 
 ## Connections Grouped by Source Connector
 
-### MAIN42 (3 connections)
+### MAIN42 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 7 | SP_CUSTOM_006 |  | 6.0 | PU |
 | 73 | MAIN42 | 7 | 6.0 | PU |
 | 78 | MAIN557 | 29 | 0.5 | GY/PU |
 
-### MAIN557 (4 connections)
+### MAIN557 (5 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
@@ -55,12 +56,14 @@
 | 12 | MAIN38 | 16 | 0.35 | BU/PU |
 | 13 | MAIN38 | 19 | 0.35 | PU |
 | 30 | MAIN38 | 8 | 0.35 | PU/RD |
+| 32 | G502A(m) |  | 0.5 | BK |
 
-### RS800 (1 connections)
+### RS800 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 29 | SP_CUSTOM_001 |  | 0.5 | RD/BK |
+| 32 | SP_CUSTOM_004 |  | 0.35 | BK/WH |
 
 ### RS808 (2 connections)
 
@@ -88,7 +91,7 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 1 | RS800 | 13 | 0.35 | YE |
-| 3 | SP_CUSTOM_004 |  | 0.35 | BK/WH |
+| 3 | SP_CUSTOM_007 |  | 0.35 | BK/WH |
 
 ### RS901 (1 connections)
 
@@ -153,3 +156,9 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 |  | RS856 | 2 | 0.5 | RD/BK |
+
+### SP_CUSTOM_007 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+|  | SP_CUSTOM_004 |  | 0.35 | BK/WH |
