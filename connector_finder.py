@@ -165,10 +165,7 @@ def find_connector_above_pin(
                 # Wire goes right to left
                 is_between = pin_x < cx < source_x
 
-            # CRITICAL: Only prioritize "between" connectors if they're reasonably close in Y
-            # This prevents distant connectors from being selected just because they're between in X
-            # Use a threshold of 60 Y-units as "reasonable" vertical distance
-            if is_between and y_dist < 60:
+            if is_between:
                 between_connectors.append(conn)
             else:
                 other_connectors.append(conn)
