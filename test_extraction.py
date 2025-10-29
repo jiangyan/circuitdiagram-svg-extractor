@@ -51,6 +51,7 @@ from svg_parser import (
     parse_all_polylines,
     parse_st17_paths,
     parse_st1_paths,
+    parse_routing_paths,
     extract_wire_specs,
     map_splice_positions_to_dots,
     generate_ids_for_unlabeled_splices
@@ -94,9 +95,10 @@ class ExtractionTester:
         # Parse SVG
         text_elements = parse_text_elements(svg_file)
         splice_dots = parse_splice_dots(svg_file)
-        polylines = parse_all_polylines(svg_file)  # Use all polylines for diagonal routing
+        all_polylines = parse_all_polylines(svg_file)  # Use all polylines for routing
         st17_paths = parse_st17_paths(svg_file)
         st1_paths = parse_st1_paths(svg_file)
+        routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # L-shaped routing wires
 
         # Map splice positions
         text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
@@ -108,13 +110,15 @@ class ExtractionTester:
         wire_specs = extract_wire_specs(text_elements)
 
         # Run extractors
-        horizontal_extractor = HorizontalWireExtractor(text_elements, wire_specs)
+        horizontal_extractor = HorizontalWireExtractor(text_elements, wire_specs, all_polylines)
         horizontal_connections = horizontal_extractor.extract_connections()
 
-        vertical_extractor = VerticalRoutingExtractor(polylines, st1_paths, text_elements)
+        # Combine st1 and st3/st4 routing paths
+        all_routing_paths = st1_paths + routing_paths
+        vertical_extractor = VerticalRoutingExtractor(all_polylines, all_routing_paths, text_elements, wire_specs, horizontal_connections)
         vertical_connections = vertical_extractor.extract_connections()
 
-        ground_extractor = GroundConnectionExtractor(st17_paths, text_elements)
+        ground_extractor = GroundConnectionExtractor(st17_paths, text_elements, wire_specs, horizontal_connections)
         ground_connections = ground_extractor.extract_connections()
 
         # Combine and deduplicate globally
