@@ -693,31 +693,103 @@ class VerticalRoutingExtractor:
                     # Create connections for all adjacent pairs
                     chain = all_points
 
-                    for i in range(len(chain) - 1):
-                        from_point = chain[i]
-                        to_point = chain[i + 1]
+                    # CRITICAL: When multiple pins from same connector are in chain with splices,
+                    # each pin should connect to the splice, not to each other
+                    # Example: FL7611,5 → FL7611,9 → FL7611,1 → SP025
+                    # Should create: FL7611,5→SP025, FL7611,9→SP025, FL7611,1→SP025
+                    # NOT: FL7611,5→FL7611,9, FL7611,9→FL7611,1, FL7611,1→SP025
 
-                        # Skip if self-loop
-                        if from_point.connector_id == to_point.connector_id and from_point.pin == to_point.pin:
-                            continue
+                    # Check if chain contains splice points
+                    has_splice_in_chain = any(is_splice_point(p.connector_id) for p in chain)
 
-                        # Skip if has horizontal wire (for pins only, not splices)
-                        from_key = (from_point.connector_id, from_point.pin)
-                        if not is_splice_point(from_point.connector_id) and from_key in self.pins_with_horizontal_wires:
-                            continue
+                    if has_splice_in_chain:
+                        # Group consecutive pins from same connector, connect each to nearest splice
+                        # Example: FL7611,5 → SP025, FL7611,9 → SP025, FL7611,1 → SP025
+                        import math
 
-                        # Skip if both are pass-through splices
-                        if from_point.connector_id in self.passthrough_splices and to_point.connector_id in self.passthrough_splices:
-                            continue
+                        for i in range(len(chain)):
+                            current = chain[i]
 
-                        connections.append(Connection(
-                            from_id=from_point.connector_id,
-                            from_pin=from_point.pin,
-                            to_id=to_point.connector_id,
-                            to_pin=to_point.pin,
-                            wire_dm=wire_dm,
-                            wire_color=wire_color
-                        ))
+                            # Skip if current is a splice (splices can form chains)
+                            if is_splice_point(current.connector_id):
+                                continue
+
+                            # Find nearest splice point in chain (could be before or after)
+                            nearest_splice = None
+                            min_distance = float('inf')
+
+                            for j in range(len(chain)):
+                                if i == j or not is_splice_point(chain[j].connector_id):
+                                    continue
+
+                                dist = math.sqrt((current.x - chain[j].x)**2 + (current.y - chain[j].y)**2)
+                                if dist < min_distance:
+                                    min_distance = dist
+                                    nearest_splice = chain[j]
+
+                            # Connect this pin to the nearest splice
+                            if nearest_splice:
+                                # Skip if has horizontal wire
+                                from_key = (current.connector_id, current.pin)
+                                if from_key in self.pins_with_horizontal_wires:
+                                    continue
+
+                                connections.append(Connection(
+                                    from_id=current.connector_id,
+                                    from_pin=current.pin,
+                                    to_id=nearest_splice.connector_id,
+                                    to_pin=nearest_splice.pin,
+                                    wire_dm=wire_dm,
+                                    wire_color=wire_color
+                                ))
+
+                        # Also create connections between consecutive splices
+                        splice_indices = [i for i, p in enumerate(chain) if is_splice_point(p.connector_id)]
+                        for i in range(len(splice_indices) - 1):
+                            from_idx = splice_indices[i]
+                            to_idx = splice_indices[i + 1]
+                            from_splice = chain[from_idx]
+                            to_splice = chain[to_idx]
+
+                            # Skip if both are pass-through splices
+                            if from_splice.connector_id in self.passthrough_splices and to_splice.connector_id in self.passthrough_splices:
+                                continue
+
+                            connections.append(Connection(
+                                from_id=from_splice.connector_id,
+                                from_pin=from_splice.pin,
+                                to_id=to_splice.connector_id,
+                                to_pin=to_splice.pin,
+                                wire_dm=wire_dm,
+                                wire_color=wire_color
+                            ))
+                    else:
+                        # No splices in chain - use normal adjacent pair logic
+                        for i in range(len(chain) - 1):
+                            from_point = chain[i]
+                            to_point = chain[i + 1]
+
+                            # Skip if self-loop
+                            if from_point.connector_id == to_point.connector_id and from_point.pin == to_point.pin:
+                                continue
+
+                            # Skip if same connector (different pins)
+                            if from_point.connector_id == to_point.connector_id:
+                                continue
+
+                            # Skip if has horizontal wire (for pins only, not splices)
+                            from_key = (from_point.connector_id, from_point.pin)
+                            if not is_splice_point(from_point.connector_id) and from_key in self.pins_with_horizontal_wires:
+                                continue
+
+                            connections.append(Connection(
+                                from_id=from_point.connector_id,
+                                from_pin=from_point.pin,
+                                to_id=to_point.connector_id,
+                                to_pin=to_point.pin,
+                                wire_dm=wire_dm,
+                                wire_color=wire_color
+                            ))
 
                     # Continue to next polyline (don't process old two-connection logic below)
                     continue
@@ -1132,7 +1204,7 @@ class GroundConnectionExtractor:
 
 def deduplicate_connections(connections: List[Connection]) -> List[Connection]:
     """
-    Remove duplicate connections.
+    Remove duplicate connections and self-loops.
 
     When duplicates exist (same from/to), prefer the one WITH wire specs.
     This happens when both horizontal wire and routing extractors find the same connection.
@@ -1143,9 +1215,28 @@ def deduplicate_connections(connections: List[Connection]) -> List[Connection]:
     Returns:
         List of unique Connection objects
     """
-    seen = {}  # key -> Connection
+    # CRITICAL: Filter out self-loop connections (connector/splice connecting to itself)
+    # Example invalid connections: SP123 → SP123, RRS111,5 → RRS111,5
+    # These are caused by arrows pointing to descriptions/labels
+    filtered = []
+    self_loop_count = 0
 
     for conn in connections:
+        # Check if connection is a self-loop
+        is_self_loop = (conn.from_id == conn.to_id and conn.from_pin == conn.to_pin)
+
+        if is_self_loop:
+            self_loop_count += 1
+            continue
+
+        filtered.append(conn)
+
+    if self_loop_count > 0:
+        print(f"Filtered out {self_loop_count} self-loop connections")
+
+    seen = {}  # key -> Connection
+
+    for conn in filtered:
         key = (conn.from_id, conn.from_pin, conn.to_id, conn.to_pin)
 
         if key not in seen:
