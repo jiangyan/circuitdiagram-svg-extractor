@@ -197,7 +197,7 @@ def main():
     print("\n" + "=" * 80)
     print("Extracting Horizontal Wire Connections")
     print("=" * 80)
-    horizontal_extractor = HorizontalWireExtractor(text_elements, wire_specs)
+    horizontal_extractor = HorizontalWireExtractor(text_elements, wire_specs, all_polylines)
     horizontal_connections = horizontal_extractor.extract_connections()
     print(f"Extracted {len(horizontal_connections)} horizontal wire connections")
 

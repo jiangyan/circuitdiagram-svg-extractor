@@ -18,10 +18,49 @@ from connector_finder import (
 class HorizontalWireExtractor:
     """Extracts connections from horizontal wires with specifications."""
 
-    def __init__(self, text_elements: List[TextElement], wire_specs: List[WireSpec]):
+    def __init__(self, text_elements: List[TextElement], wire_specs: List[WireSpec], polylines: List[str] = None):
         self.text_elements = text_elements
         self.wire_specs = wire_specs
         self.seen_pin_pairs: Set[Tuple] = set()
+
+        # CRITICAL: Identify splices on vertical polyline segments
+        # These should NOT create horizontal wire connections
+        self.splices_on_vertical_segments = self._find_splices_on_vertical_segments(text_elements, polylines or [])
+
+    def _find_splices_on_vertical_segments(self, text_elements: List[TextElement], polylines: List[str]) -> Set[str]:
+        """Find splice points that are on vertical polyline segments."""
+        splices_on_vertical = set()
+
+        # Get all splice positions
+        splices = [(e.content, e.x, e.y) for e in text_elements if is_splice_point(e.content)]
+
+        for polyline in polylines:
+            points = polyline.split()
+            parsed_points = []
+            for point in points:
+                if ',' in point:
+                    parts = point.split(',')
+                    if len(parts) == 2:
+                        try:
+                            px = float(parts[0])
+                            py = float(parts[1])
+                            parsed_points.append((px, py))
+                        except:
+                            pass
+
+            # Check each segment
+            for i in range(len(parsed_points) - 1):
+                x1, y1 = parsed_points[i]
+                x2, y2 = parsed_points[i + 1]
+
+                # Check if this is a vertical segment
+                if abs(x1 - x2) < 5:  # Vertical segment
+                    # Check if any splice is on this segment
+                    for sp_id, sp_x, sp_y in splices:
+                        if abs(sp_x - x1) < 10 and min(y1, y2) < sp_y < max(y1, y2):
+                            splices_on_vertical.add(sp_id)
+
+        return splices_on_vertical
 
     def extract_connections(self) -> List[Connection]:
         """
@@ -144,6 +183,16 @@ class HorizontalWireExtractor:
                 for i in range(len(connection_points) - 1):
                     left_point = connection_points[i]
                     right_point = connection_points[i + 1]
+
+                    # CRITICAL: Skip pairs where splice is on vertical segment AND no wire spec between them
+                    # Example: SP_CUSTOM_006 (vertical) → RS856,2 with no spec between = wrong
+                    # But SP_CUSTOM_004 (vertical) → RS800,32 with spec between = correct
+                    between_specs_check = [s for s in specs_on_line if left_point.x < s.x < right_point.x]
+
+                    if not between_specs_check:  # No spec between
+                        if (is_splice_point(left_point.content) and left_point.content in self.splices_on_vertical_segments) or \
+                           (is_splice_point(right_point.content) and right_point.content in self.splices_on_vertical_segments):
+                            continue
 
                     # CRITICAL: Select wire spec FOR THIS SPECIFIC PAIR
                     # 1. Find specs BETWEEN the two points (in X)

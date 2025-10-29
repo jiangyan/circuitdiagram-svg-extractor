@@ -172,8 +172,34 @@ def find_connector_above_pin(
 
         # If we have connectors between, prioritize them
         if between_connectors:
-            # Use between connectors, sorted by closeness to pin
-            connectors_with_distance = between_connectors + other_connectors
+            # CRITICAL: Among "between" connectors, use smart sorting strategy:
+            # 1. First, filter to connectors within 50 Y units of pin (ignore distant connectors)
+            #    Example: SP_CUSTOM_001 → RS808/RS911 (Y=14) vs RS809 (Y=337) → ignore RS809
+            # 2. Among close connectors, if they have different Y distances (>50 units), prefer closest to PIN
+            #    Example: RS901,4 → RS904 (Y=14) vs RS857 (Y=154) → pick RS904 (just above wire)
+            # 3. If they have similar Y distances (<50 units), prefer closest to SOURCE
+            #    Example: SP_CUSTOM_001 → RS808 (X dist=41) vs RS911 (X dist=64) → pick RS808 (to the left)
+
+            # Filter to connectors within 50 Y units of pin
+            close_between_connectors = [c for c in between_connectors if c[1] < 50]  # c[1] is Y distance
+
+            # If we have close connectors, use them; otherwise use all between connectors
+            connectors_to_sort = close_between_connectors if close_between_connectors else between_connectors
+
+            # Check Y distance range among connectors to sort
+            y_distances = [c[1] for c in connectors_to_sort]
+            min_y_dist = min(y_distances)
+            max_y_dist = max(y_distances)
+            y_range = max_y_dist - min_y_dist
+
+            if y_range > 50:
+                # Large Y range: prefer connector closest to pin (smallest Euclidean distance)
+                connectors_to_sort.sort(key=lambda c: c[0])  # c[0] is Euclidean distance
+            else:
+                # Small Y range: prefer connector closest to source (smallest X distance to source)
+                connectors_to_sort.sort(key=lambda c: abs(c[4] - source_x))  # c[4] is connector X
+
+            connectors_with_distance = connectors_to_sort + other_connectors
 
     # Check for junction pairs (mirrored connectors like FL2MH/MH2FL, FTL2FL/FL2FTL)
     has_junction_pair = False
