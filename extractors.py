@@ -607,6 +607,11 @@ class VerticalRoutingExtractor:
                     except (ValueError, IndexError):
                         continue
 
+                # CRITICAL: Collect ALL splices on segments, not just the first one
+                # Example: 005→006→001 should find both 006
+                # Example: RS857,3→008→007→004 should find both 008 and 007
+                all_intermediate_splices = []
+
                 # Check each line segment for splice points
                 for i in range(len(parsed_points) - 1):
                     x1, y1 = parsed_points[i]
@@ -642,63 +647,79 @@ class VerticalRoutingExtractor:
                                 if (candidate_splice.connector_id == endpoint2.connector_id and
                                     candidate_splice.pin == endpoint2.pin):
                                     continue
-                                # Not an endpoint - use it
-                                splice_found = candidate_splice
-                                break
-
-                    if splice_found:
-                        break
+                                # Add to list (not break!)
+                                if candidate_splice not in all_intermediate_splices:
+                                    all_intermediate_splices.append(candidate_splice)
 
                 # If no splice found on segments, check vertices (for T-junctions)
                 # CRITICAL: Use STRICT distance threshold (20 units) to avoid false matches
                 # Long routing polylines can pass near other splices that aren't part of the path
-                if not splice_found:
+                if not all_intermediate_splices:
                     for i in range(1, len(parsed_points) - 1):  # Skip first and last
                         px, py = parsed_points[i]
                         intermediate = find_nearest_connection_point(px, py, self.text_elements, max_distance=20)
                         if intermediate and is_splice_point(intermediate.connector_id):
-                            splice_found = intermediate
-                            break
+                            if intermediate not in all_intermediate_splices:
+                                all_intermediate_splices.append(intermediate)
 
-                # If we found a splice in the middle, create connections
-                # For a chain (ep1 -> splice -> ep2), we need:
-                #   ep1 -> splice and splice -> ep2
-                if splice_found:
-                    # For multi-segment paths, source is endpoint1 (first point)
+                # If we found intermediate splices, create connections for ALL adjacent pairs
+                # Example: 005→006→001 creates: 005→006, 006→001
+                # Example: RS857,3→008→007→004 creates: RS857,3→008, 008→007, 007→004
+                if all_intermediate_splices:
+                    import math
+
+                    # CRITICAL: Determine path orientation (vertical vs horizontal)
+                    # For vertical paths, sort by Y (top to bottom)
+                    # For horizontal paths, sort by X (left to right)
+                    x_diff = abs(endpoint1.x - endpoint2.x)
+                    y_diff = abs(endpoint1.y - endpoint2.y)
+
+                    is_vertical = y_diff > x_diff
+
+                    # Build complete chain including endpoints
+                    all_points = [endpoint1] + all_intermediate_splices + [endpoint2]
+
+                    # Sort chain by position (not by distance from arbitrary endpoint)
+                    if is_vertical:
+                        # Vertical: sort by Y (top to bottom = increasing Y)
+                        all_points.sort(key=lambda p: p.y)
+                    else:
+                        # Horizontal: sort by X (left to right = increasing X)
+                        all_points.sort(key=lambda p: p.x)
+
+                    # For multi-segment paths, source is first point in sorted chain
                     wire_dm, wire_color = self._find_wire_spec_near_path(path_points, (start_x, start_y))
 
-                    # Connection 1: endpoint1 -> splice (skip if self-loop or has horizontal wire)
-                    ep1_key = (endpoint1.connector_id, endpoint1.pin)
-                    if not (endpoint1.connector_id == splice_found.connector_id and
-                            endpoint1.pin == splice_found.pin) and \
-                       ep1_key not in self.pins_with_horizontal_wires:
-                        # Skip if both endpoints are pass-through splices
-                        if not (endpoint1.connector_id in self.passthrough_splices and
-                                splice_found.connector_id in self.passthrough_splices):
-                            connections.append(Connection(
-                                from_id=endpoint1.connector_id,
-                                from_pin=endpoint1.pin,
-                                to_id=splice_found.connector_id,
-                                to_pin=splice_found.pin,
-                                wire_dm=wire_dm,
-                                wire_color=wire_color
-                            ))
+                    # Create connections for all adjacent pairs
+                    chain = all_points
 
-                    # Connection 2: splice -> endpoint2 (skip if self-loop)
-                    # This creates a chain: endpoint1 -> splice -> endpoint2
-                    if not (endpoint2.connector_id == splice_found.connector_id and
-                            endpoint2.pin == splice_found.pin):
-                        # Skip if both endpoints are pass-through splices
-                        if not (splice_found.connector_id in self.passthrough_splices and
-                                endpoint2.connector_id in self.passthrough_splices):
-                            connections.append(Connection(
-                                from_id=splice_found.connector_id,
-                                from_pin=splice_found.pin,
-                                to_id=endpoint2.connector_id,
-                                to_pin=endpoint2.pin,
-                                wire_dm=wire_dm,
-                                wire_color=wire_color
-                            ))
+                    for i in range(len(chain) - 1):
+                        from_point = chain[i]
+                        to_point = chain[i + 1]
+
+                        # Skip if self-loop
+                        if from_point.connector_id == to_point.connector_id and from_point.pin == to_point.pin:
+                            continue
+
+                        # Skip if has horizontal wire (for pins only, not splices)
+                        from_key = (from_point.connector_id, from_point.pin)
+                        if not is_splice_point(from_point.connector_id) and from_key in self.pins_with_horizontal_wires:
+                            continue
+
+                        # Skip if both are pass-through splices
+                        if from_point.connector_id in self.passthrough_splices and to_point.connector_id in self.passthrough_splices:
+                            continue
+
+                        connections.append(Connection(
+                            from_id=from_point.connector_id,
+                            from_pin=from_point.pin,
+                            to_id=to_point.connector_id,
+                            to_pin=to_point.pin,
+                            wire_dm=wire_dm,
+                            wire_color=wire_color
+                        ))
+
+                    # Continue to next polyline (don't process old two-connection logic below)
                     continue
 
             # Normal case: determine direction
