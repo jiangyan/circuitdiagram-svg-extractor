@@ -1,14 +1,14 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 19
+**Total Connections:** 26
 
 ## All Connections (Sorted by From Connector)
 
 | From | From Pin | To | To Pin | Wire DM | Color |
 |------|----------|-----|--------|---------|-------|
+| MAIN14 | 1 | G203B(m) |  | 4.0 | BK |
 | MAIN220 | 8 | SP082 |  | 0.35 | BN/GN |
 | MAIN42 | 3 | MAIN14 | 5 | 4.0 | PU |
-| MAIN42 | 3 | UH08 |  |  |  |
 | MAIN585 | 1 | SP034 |  | 0.35 | BK |
 | MAIN585 | 8 | MAIN14 | 2 | 0.35 | GN |
 | MAIN585 | 9 | MAIN14 | 7 | 0.35 | PU |
@@ -25,8 +25,21 @@
 | SR01 | 7 | SR02 | 3 | 0.35 | YE |
 | SR01 | 8 | SR02 | 12 | 0.35 | PU |
 | SR01 | 10 | SR02 | 14 | 0.5 | BN |
+| SR02 | 1 | SR03 | 2 | 2.5 | RD |
+| SR02 | 4 | SR03 | 5 | 0.35 | WH |
+| SR02 | 5 | SR03 | 6 | 0.35 | RD |
+| SR02 | 6 | SR03 | 4 | 0.35 | BK |
+| SR02 | 10 | SR03 | 1 | 2.5 | BK |
+| SR02 | 15 | SR03 | 3 | 0.35 | GN |
+| UH07 |  | UH08 |  | 35 | RD/YE |
 
 ## Connections Grouped by Source Connector
+
+### MAIN14 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 1 | G203B(m) |  | 4.0 | BK |
 
 ### MAIN220 (1 connections)
 
@@ -34,12 +47,11 @@
 |----------|-----|--------|---------|-------|
 | 8 | SP082 |  | 0.35 | BN/GN |
 
-### MAIN42 (2 connections)
+### MAIN42 (1 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 3 | MAIN14 | 5 | 4.0 | PU |
-| 3 | UH08 |  |  |  |
 
 ### MAIN585 (6 connections)
 
@@ -81,3 +93,20 @@
 | 7 | SR02 | 3 | 0.35 | YE |
 | 8 | SR02 | 12 | 0.35 | PU |
 | 10 | SR02 | 14 | 0.5 | BN |
+
+### SR02 (6 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+| 1 | SR03 | 2 | 2.5 | RD |
+| 4 | SR03 | 5 | 0.35 | WH |
+| 5 | SR03 | 6 | 0.35 | RD |
+| 6 | SR03 | 4 | 0.35 | BK |
+| 10 | SR03 | 1 | 2.5 | BK |
+| 15 | SR03 | 3 | 0.35 | GN |
+
+### UH07 (1 connections)
+
+| From Pin | To | To Pin | Wire DM | Color |
+|----------|-----|--------|---------|-------|
+|  | UH08 |  | 35 | RD/YE |

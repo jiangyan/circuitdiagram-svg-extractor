@@ -473,6 +473,62 @@ class VerticalRoutingExtractor:
             if splice_incoming.get(splice_id, 0) >= 1 and splice_outgoing.get(splice_id, 0) >= 1:
                 self.passthrough_splices.add(splice_id)
 
+    def _find_wire_spec_for_rectangular_polyline(self, path_points: List[Tuple[float, float]]) -> Tuple[str, str]:
+        """
+        Find the wire spec for a rectangular polyline by prioritizing the LONGEST horizontal segment.
+
+        Rectangular polylines typically have a short horizontal segment at the entry point
+        and a long horizontal segment that carries the main wire with its spec.
+
+        Args:
+            path_points: List of (x, y) coordinates along the rectangular polyline
+
+        Returns:
+            Tuple of (diameter, color) or (None, None) if no spec found
+        """
+        if not self.wire_specs or len(path_points) < 2:
+            return (None, None)
+
+        # Find all horizontal segments and their lengths
+        horizontal_segments = []
+        for i in range(len(path_points) - 1):
+            x1, y1 = path_points[i]
+            x2, y2 = path_points[i + 1]
+
+            # Check if this segment is horizontal (Y change < 5 units)
+            if abs(y2 - y1) < 5:
+                length = abs(x2 - x1)
+                horizontal_segments.append((length, x1, y1, x2, y2))
+
+        if not horizontal_segments:
+            return (None, None)
+
+        # Sort by length (longest first)
+        horizontal_segments.sort(reverse=True)
+
+        # Use the longest horizontal segment to find wire spec
+        _, x1, y1, x2, y2 = horizontal_segments[0]
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        segment_y = (y1 + y2) / 2
+
+        # Find wire spec on this segment
+        closest_spec = None
+        min_dist = float('inf')
+
+        for spec in self.wire_specs:
+            # Spec must be on the horizontal segment (within ±15 Y units)
+            if abs(spec.y - segment_y) < 15:
+                # Spec should be between the X endpoints of the segment
+                if min_x - 50 < spec.x < max_x + 50:
+                    dist = abs(spec.y - segment_y)
+                    if dist < min_dist:
+                        min_dist = dist
+                        closest_spec = spec
+
+        if closest_spec:
+            return (closest_spec.diameter, closest_spec.color)
+        return (None, None)
+
     def _find_wire_spec_near_path(self, path_points: List[Tuple[float, float]], source_point: Tuple[float, float] = None) -> Tuple[str, str]:
         """
         Find the wire spec closest to a routing path.
@@ -619,7 +675,123 @@ class VerticalRoutingExtractor:
                 # Both endpoints outside - this is external bus routing
                 continue
 
-            # Find nearest connection points to both endpoints
+            # CRITICAL: For rectangular routing polylines (4 points), find connection points at ALL corners
+            # These represent rectangular wire paths (e.g., SR02 → SR03, UH07 → UH08)
+            # Structure: point1 → point2 → point3 → point4 (3 sides of rectangle, 4th side is implicit)
+            is_rectangular = (len(point_pairs) == 4 and
+                            len(path_points) == 4 and
+                            abs(path_points[0][1] - path_points[1][1]) < 5 and  # First segment horizontal
+                            abs(path_points[1][0] - path_points[2][0]) < 5 and  # Second segment vertical
+                            abs(path_points[2][1] - path_points[3][1]) < 5)     # Third segment horizontal
+
+            if is_rectangular:
+                # Find CONNECTORS (not just pins) near all 4 corners
+                # Rectangular routing wires connect entire connectors, not specific pins
+
+                # CRITICAL: For rectangular polylines, determine wire spec ONCE using longest segment
+                # This will be reused for all connections created from this polyline
+                rectangular_wire_spec = self._find_wire_spec_for_rectangular_polyline(path_points)
+
+                corner_endpoints = []
+                for px, py in path_points:
+                    # Find nearest connector label or pin/splice
+                    nearest_connector = None
+                    min_dist = 15  # max distance (tight threshold to match only true endpoints, not incidental nearby labels)
+
+                    for elem in self.text_elements:
+                        dist = math.sqrt((elem.x - px)**2 + (elem.y - py)**2)
+                        if dist < min_dist:
+                            # Accept: connector IDs, pins (digits), or splice points
+                            if is_connector_id(elem.content) or elem.content.isdigit() or is_splice_point(elem.content):
+                                min_dist = dist
+                                nearest_connector = elem
+
+                    if nearest_connector:
+                        # If it's a pin, find the connector above it
+                        if nearest_connector.content.isdigit():
+                            conn_result = find_connector_above_pin(
+                                nearest_connector.x, nearest_connector.y, self.text_elements,
+                                prefer_as_source=False
+                            )
+                            if conn_result:
+                                # CRITICAL: Check if this connector+pin already has a horizontal wire
+                                # If so, and the polyline will have a different wire spec, try alternative connectors
+                                primary_connector = conn_result[0]
+                                pin_num = nearest_connector.content
+
+                                # Check existing horizontal wires from this connector+pin
+                                existing_wire_spec = None
+                                for conn in self.horizontal_connections:
+                                    if conn.from_id == primary_connector and conn.from_pin == pin_num:
+                                        existing_wire_spec = (conn.wire_dm, conn.wire_color)
+                                        break
+
+                                # Use the pre-calculated wire spec for this rectangular polyline
+                                polyline_wire_spec = rectangular_wire_spec
+
+                                # If wire specs conflict, try to find alternative connector
+                                if existing_wire_spec and polyline_wire_spec != (None, None):
+                                    if existing_wire_spec != polyline_wire_spec:
+                                        # Try to find an alternative connector (not the primary one)
+                                        all_connectors = find_all_connectors_above_pin(
+                                            nearest_connector.x, nearest_connector.y, self.text_elements
+                                        )
+                                        # Filter out the primary connector and use the next available one
+                                        # Note: find_all_connectors_above_pin returns (y_distance, connector_id, x, y)
+                                        for y_dist, alt_conn_id, alt_x, alt_y in all_connectors:
+                                            if alt_conn_id != primary_connector:
+                                                # Found an alternative connector
+                                                conn_result = (alt_conn_id, alt_x, alt_y)
+                                                break
+
+                                endpoint = ConnectionPoint(
+                                    connector_id=conn_result[0],
+                                    pin=nearest_connector.content,
+                                    x=conn_result[1],
+                                    y=conn_result[2]
+                                )
+                            else:
+                                endpoint = None
+                        else:
+                            # It's a connector label or splice - use directly
+                            endpoint = ConnectionPoint(
+                                connector_id=nearest_connector.content,
+                                pin='',
+                                x=nearest_connector.x,
+                                y=nearest_connector.y
+                            )
+
+                        if endpoint:
+                            corner_endpoints.append(endpoint)
+
+                # Create connections between adjacent corners
+                if len(corner_endpoints) >= 2:
+                    # Use the pre-calculated wire spec for rectangular polylines
+                    wire_dm, wire_color = rectangular_wire_spec if rectangular_wire_spec != (None, None) else ('', '')
+
+                    for i in range(len(corner_endpoints) - 1):
+                        ep1 = corner_endpoints[i]
+                        ep2 = corner_endpoints[i + 1]
+
+                        # Skip if endpoints are the same
+                        if (ep1.connector_id == ep2.connector_id and ep1.pin == ep2.pin):
+                            continue
+
+                        # Create connection
+                        conn = Connection(
+                            from_id=ep1.connector_id,
+                            from_pin=ep1.pin if ep1.pin else '',
+                            to_id=ep2.connector_id,
+                            to_pin=ep2.pin if ep2.pin else '',
+                            wire_dm=wire_dm,
+                            wire_color=wire_color
+                        )
+                        connections.append(conn)
+
+                # Skip normal endpoint processing for rectangular polylines
+                continue
+
+            # Find nearest connection points to both endpoints (for non-rectangular polylines)
             # Pass horizontal_connections to filter out pins already in use
             endpoint1 = find_nearest_connection_point(start_x, start_y, self.text_elements, max_distance=100,
                                                      horizontal_connections=self.horizontal_connections)
@@ -714,7 +886,6 @@ class VerticalRoutingExtractor:
                 # Example: 005→006→001 creates: 005→006, 006→001
                 # Example: RS857,3→008→007→004 creates: RS857,3→008, 008→007, 007→004
                 if all_intermediate_splices:
-                    import math
 
                     # CRITICAL: Determine path orientation (vertical vs horizontal)
                     # For vertical paths, sort by Y (top to bottom)
@@ -753,7 +924,6 @@ class VerticalRoutingExtractor:
                     if has_splice_in_chain:
                         # Group consecutive pins from same connector, connect each to nearest splice
                         # Example: FL7611,5 → SP025, FL7611,9 → SP025, FL7611,1 → SP025
-                        import math
 
                         for i in range(len(chain)):
                             current = chain[i]
@@ -830,7 +1000,6 @@ class VerticalRoutingExtractor:
                             both_splices = (is_splice_point(from_point.connector_id) and
                                           is_splice_point(to_point.connector_id))
                             if both_splices:
-                                import math
                                 dist = math.sqrt((from_point.x - to_point.x)**2 + (from_point.y - to_point.y)**2)
                                 if dist < 400:
                                     continue
@@ -902,7 +1071,6 @@ class VerticalRoutingExtractor:
             # Long routing connections (>= 400 units) are handled by LongRoutingConnectionExtractor
             # which uses wire color flow analysis to verify they're real connections.
             if ep1_is_splice and ep2_is_splice:
-                import math
                 dist = math.sqrt((endpoint1.x - endpoint2.x)**2 + (endpoint1.y - endpoint2.y)**2)
                 if dist < 400:
                     continue
@@ -1088,7 +1256,6 @@ class VerticalRoutingExtractor:
                 both_splices = (is_splice_point(source.connector_id) and
                               is_splice_point(dest.connector_id))
                 if both_splices:
-                    import math
                     dist = math.sqrt((source.x - dest.x)**2 + (source.y - dest.y)**2)
                     if dist < 400:
                         continue
