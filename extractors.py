@@ -184,12 +184,16 @@ class HorizontalWireExtractor:
                     left_point = connection_points[i]
                     right_point = connection_points[i + 1]
 
-                    # CRITICAL: Skip pairs where splice is on vertical segment AND no wire spec between them
-                    # Example: SP_CUSTOM_006 (vertical) → RS856,2 with no spec between = wrong
+                    # CRITICAL: Skip pairs where splice is on vertical segment AND no wire spec nearby
+                    # Example: SP_CUSTOM_006 (vertical) → RS856,2 with no spec nearby = wrong
                     # But SP_CUSTOM_004 (vertical) → RS800,32 with spec between = correct
+                    # Also allow: SP_CUSTOM_009 → pin 7 where spec is on the left side (part of horizontal bus)
                     between_specs_check = [s for s in specs_on_line if left_point.x < s.x < right_point.x]
 
-                    if not between_specs_check:  # No spec between
+                    # MODIFIED: Also check for specs near the left point (within 50 units) to allow horizontal bus continuations
+                    nearby_specs_left = [s for s in specs_on_line if abs(s.x - left_point.x) < 50]
+
+                    if not between_specs_check and not nearby_specs_left:  # No spec between OR nearby left
                         if (is_splice_point(left_point.content) and left_point.content in self.splices_on_vertical_segments) or \
                            (is_splice_point(right_point.content) and right_point.content in self.splices_on_vertical_segments):
                             continue
@@ -271,6 +275,65 @@ class HorizontalWireExtractor:
                         if has_splice_between:
                             # There's a splice between - skip this direct connection
                             continue
+
+                    # CRITICAL: Skip connections if there's a DIFFERENT connector LABEL between the connection points
+                    # ONLY when connecting to a SPLICE (not for pin-to-pin connections)
+                    # Even if the connector has no pins on this line, its label acts as a module boundary
+                    # Example: Pin 15 (RR626) should not connect to SP305 if RRT626 label is between them
+                    # BUT: Pin 11 (RLS200) CAN connect to SP_CUSTOM_006 even if RLS200 label is between (it's the pin's own connector!)
+                    # This prevents false connections across module boundaries on long horizontal buses
+                    if is_splice_point(left_id) or is_splice_point(right_id):
+                        # Collect connectors that own the endpoints (don't count these as boundaries)
+                        own_connectors = set()
+                        if not is_splice_point(left_id):
+                            own_connectors.add(left_id)
+                        if not is_splice_point(right_id):
+                            own_connectors.add(right_id)
+
+                        # Find connector labels between the connection points
+                        connectors_between = [
+                            elem.content
+                            for elem in self.text_elements
+                            if is_connector_id(elem.content) and not '(' in elem.content and  # Connector label (not ground)
+                               elem.content not in own_connectors and  # Not the pin's own connector
+                               left_point.x < elem.x < right_point.x and  # Between in X
+                               abs(elem.y - pair_avg_y) < 15  # On same horizontal level (within ±15 units)
+                        ]
+
+                        if connectors_between:
+                            # CRITICAL: Allow passing through junction pair labels
+                            # Example: SP167 → MH2FL,5 should not be blocked by FL2MH label between them
+                            # MH2FL and FL2MH are junction pairs sharing the same pins
+                            # Check if ALL connectors between are junction pairs with the destination
+                            def is_junction_pair(conn1, conn2):
+                                """Check if two connectors are a junction pair (share pins)."""
+                                # Junction pairs: MH2FL/FL2MH, FTL2FL/FL2FTL, etc.
+                                # Check if both connectors contain '2FL' or 'FL2'
+                                has_junction1 = '2FL' in conn1 or 'FL2' in conn1
+                                has_junction2 = '2FL' in conn2 or 'FL2' in conn2
+
+                                if has_junction1 and has_junction2:
+                                    # Extract the middle parts: MH2FL → MH, FL2MH → MH
+                                    if 'FL2' in conn1:
+                                        part1 = conn1.replace('FL2', '')
+                                    else:
+                                        part1 = conn1.replace('2FL', '')
+                                    if 'FL2' in conn2:
+                                        part2 = conn2.replace('FL2', '')
+                                    else:
+                                        part2 = conn2.replace('2FL', '')
+                                    return part1 == part2
+                                return False
+
+                            # Check if all connectors between are junction pairs with destination
+                            all_are_junction_pairs = all(
+                                is_junction_pair(conn, right_id) or is_junction_pair(conn, left_id)
+                                for conn in connectors_between
+                            )
+
+                            if not all_are_junction_pairs:
+                                # There's a different connector boundary between - skip this connection
+                                continue
 
                     # CRITICAL: Skip connections between pins from different, distant connectors
                     # This prevents false connections between separate modules on the same line
@@ -1029,6 +1092,27 @@ class VerticalRoutingExtractor:
                 if same_source_different_dest_connector:
                     continue
 
+                # CRITICAL: Skip if same destination but source is same physical pin assigned to different connector
+                # Example: Horizontal has RR626,15 → MH020,17, st1 path tries to create RRT626,15 → MH020,17
+                # Pin 15 can only belong to one connector!
+                # BUT: This filter should NOT apply when destination is a SPLICE POINT
+                # Splices can have multiple incoming connections from different pins with same number
+                # Example: SP305 can connect to BOTH RRT14,1 AND RRT15,1
+                if not is_splice_point(dest.connector_id):
+                    same_dest_different_source_connector = any(
+                        # Same destination (splice or pin) and same source pin number, but different source connector
+                        (conn.to_id == dest.connector_id and conn.to_pin == dest.pin and
+                         conn.from_pin == source.pin and conn.from_id != source.connector_id and
+                         not is_splice_point(conn.from_id) and not is_splice_point(source.connector_id)) or
+                        # Or reverse direction
+                        (conn.from_id == dest.connector_id and conn.from_pin == dest.pin and
+                         conn.to_pin == source.pin and conn.to_id != source.connector_id and
+                         not is_splice_point(conn.to_id) and not is_splice_point(source.connector_id))
+                        for conn in self.horizontal_connections
+                    )
+                    if same_dest_different_source_connector:
+                        continue
+
                 # CRITICAL: Skip short-distance splice-to-splice connections
                 # These are handled by LongRoutingConnectionExtractor with color flow analysis
                 both_splices = (is_splice_point(source.connector_id) and
@@ -1058,6 +1142,11 @@ class VerticalRoutingExtractor:
                     # If splice has existing colors and this color doesn't match any of them, reject
                     if splice_colors and wire_color not in splice_colors:
                         continue
+
+                # NOTE: We do NOT apply connector boundary filtering to routing paths!
+                # Routing paths (polylines, st1, st3/st4) represent intentional cross-boundary connections
+                # (e.g., L-shaped wires that route from one module to another)
+                # Connector boundary filtering only applies to horizontal wire connections in HorizontalWireExtractor
 
                 # Create connection
                 connections.append(Connection(

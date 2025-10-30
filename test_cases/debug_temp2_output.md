@@ -17,6 +17,7 @@
 | MH629 | 18 | G21(m) |  | 0.75 | BK |
 | RLS200 | 11 | SP_CUSTOM_006 |  | 0.5 | BK/WH |
 | RR02 | 5 | RR626 | 15 | 0.35 | GY/WH |
+| RR626 | 15 | SP305 |  | 0.35 | GY/WH |
 | RR626 | 24 | SP113 |  | 0.5 | BK |
 | RRS100 | 1 | RRS114 | 10 | 2.5 | RD |
 | RRS100 | 13 | RRS513 | 7 | 0.35 | RD/OG |
@@ -91,7 +92,6 @@
 | SP_CUSTOM_006 |  | RLS103 | 1 | 0.5 | BK/WH |
 | SP_CUSTOM_007 |  | SP_CUSTOM_005 |  | 0.35 | BK/RD |
 | SP_CUSTOM_008 |  | RRS300 | 12 | 1.5 | WH |
-| SP_CUSTOM_009 |  | RRS300 | 7 | 1.0 | BK/WH |
 
 ## Connections Grouped by Source Connector
 
@@ -151,10 +151,11 @@
 |----------|-----|--------|---------|-------|
 | 5 | RR626 | 15 | 0.35 | GY/WH |
 
-### RR626 (1 connections)
+### RR626 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
+| 15 | SP305 |  | 0.35 | GY/WH |
 | 24 | SP113 |  | 0.5 | BK |
 
 ### RRS100 (3 connections)
@@ -384,9 +385,3 @@
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 |  | RRS300 | 12 | 1.5 | WH |
-
-### SP_CUSTOM_009 (1 connections)
-
-| From Pin | To | To Pin | Wire DM | Color |
-|----------|-----|--------|---------|-------|
-|  | RRS300 | 7 | 1.0 | BK/WH |

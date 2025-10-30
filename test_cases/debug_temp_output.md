@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 86
+**Total Connections:** 84
 
 ## All Connections (Sorted by From Connector)
 
@@ -78,8 +78,6 @@
 | RRS513 | 5 | RRS111 | 26 | 0.35 | BU/WH |
 | RRS513 | 6 | SP_CUSTOM_004 |  | 0.35 | GN/BU |
 | RRT14 | 3 | SP323 |  | 0.35 | BK |
-| RRT15 | 1 | SP305 |  | 0.35 | GY/WH |
-| RRT15 | 3 | SP323 |  | 0.35 | BK |
 | RRT626 | 15 | SP305 |  | 0.35 | GY/WH |
 | SP113 |  | RR622 | 26 | 0.75 | BK |
 | SP123 |  | MH317 | 11 | 0.35 | GY/PU |
@@ -310,13 +308,6 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-| 3 | SP323 |  | 0.35 | BK |
-
-### RRT15 (2 connections)
-
-| From Pin | To | To Pin | Wire DM | Color |
-|----------|-----|--------|---------|-------|
-| 1 | SP305 |  | 0.35 | GY/WH |
 | 3 | SP323 |  | 0.35 | BK |
 
 ### RRT626 (1 connections)

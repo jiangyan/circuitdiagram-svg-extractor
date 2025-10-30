@@ -251,23 +251,26 @@ def find_connector_above_pin(
                 junc2_between = pin_x < junc2_x < source_x
 
             if junc1_between and junc2_between:
-                # Both between: logic depends on junction type
-                # MH junctions: pick closer to PIN (tightly packed near destination)
-                # FTL junctions: pick closer to SOURCE (spread out along wire path)
-                if is_mh_junction:
-                    dist1_from_pin = abs(junc1_x - pin_x)
-                    dist2_from_pin = abs(junc2_x - pin_x)
-                    if dist1_from_pin < dist2_from_pin:
+                # Both between: prefer based on prefer_as_source rule
+                # For destinations (prefer_as_source=False), prefer *2FL variants
+                # For sources (prefer_as_source=True), prefer FL2* variants
+                # This overrides geometric proximity!
+                if not prefer_as_source:
+                    # Destination: prefer *2FL variant (e.g., MH2FL over FL2MH)
+                    if junc1[3].endswith('2FL'):
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    else:
+                    elif junc2[3].endswith('2FL'):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
-                else:  # FTL junction
-                    dist1_from_source = abs(junc1_x - source_x)
-                    dist2_from_source = abs(junc2_x - source_x)
-                    if dist1_from_source < dist2_from_source:
+                    else:
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    else:
+                else:
+                    # Source: prefer FL2* variant (e.g., FL2MH over MH2FL)
+                    if junc1[3].startswith('FL2'):
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                    elif junc2[3].startswith('FL2'):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+                    else:
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
             elif junc1_between and not junc2_between:
                 # Only junc1 is between: prefer it
                 conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
@@ -275,11 +278,45 @@ def find_connector_above_pin(
                 # Only junc2 is between: prefer it
                 conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
             else:
-                # Neither between: use closest to pin (junc1 is already sorted as closest)
-                conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                # Neither between: prefer based on prefer_as_source rule
+                # For destinations (prefer_as_source=False), prefer *2FL variants
+                # For sources (prefer_as_source=True), prefer FL2* variants
+                if not prefer_as_source:
+                    # Destination: prefer *2FL variant (e.g., MH2FL over FL2MH)
+                    if junc1[3].endswith('2FL'):
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                    elif junc2[3].endswith('2FL'):
+                        conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+                    else:
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                else:
+                    # Source: prefer FL2* variant (e.g., FL2MH over MH2FL)
+                    if junc1[3].startswith('FL2'):
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                    elif junc2[3].startswith('FL2'):
+                        conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+                    else:
+                        conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
         else:
-            # No source info or this is source: use closest
-            conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+            # No source info: use prefer_as_source rule
+            # For destinations (prefer_as_source=False), prefer *2FL variants
+            # For sources (prefer_as_source=True), prefer FL2* variants
+            if not prefer_as_source:
+                # Destination: prefer *2FL variant
+                if junc1[3].endswith('2FL'):
+                    conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                elif junc2[3].endswith('2FL'):
+                    conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+                else:
+                    conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+            else:
+                # Source: prefer FL2* variant
+                if junc1[3].startswith('FL2'):
+                    conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
+                elif junc2[3].startswith('FL2'):
+                    conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
+                else:
+                    conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
     else:
         # No junction pair, use closest
         conn_id, conn_x, conn_y = connectors_with_distance[0][3], connectors_with_distance[0][4], connectors_with_distance[0][5]
