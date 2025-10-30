@@ -608,3 +608,184 @@ def generate_ids_for_unlabeled_splices(
         result.append(TextElement(custom_id, dot_x, dot_y))
 
     return result
+
+
+def parse_horizontal_colored_wires(svg_file: str) -> List['HorizontalWireSegment']:
+    """
+    Parse horizontal colored wire segments from SVG.
+
+    These are represented as <line> or <path> elements with colored stroke classes
+    (st8-st31) and represent horizontal routing wires in grid-based diagrams.
+
+    Args:
+        svg_file: Path to SVG file
+
+    Returns:
+        List of HorizontalWireSegment objects
+    """
+    from models import HorizontalWireSegment
+
+    tree = ET.parse(svg_file)
+    root = tree.getroot()
+
+    # CSS class to standard wire color code mapping
+    COLOR_MAP = {
+        'st8': 'GN',      # #00B42B - Green
+        'st9': 'PU',      # #A54CFF - Purple
+        'st10': 'GY',     # #B3B3B3 - Gray
+        'st11': 'BK',     # #000000 - Black
+        'st12': 'BN',     # #804000 - Brown
+        'st19': 'YE',     # #FFFF25 - Yellow
+        'st21': 'RD',     # #FF0000 - Red
+        'st22': 'BK',     # #000000 - Black
+        'st23': 'GN',     # #00B42B - Green
+        'st24': 'WH',     # #FFFFFF - White
+        'st26': 'PU',     # #A54CFF - Purple
+        'st27': 'BU',     # #0000F8 - Blue
+        'st28': 'BN',     # #804000 - Brown
+        'st29': 'RD',     # #FF0000 - Red
+        'st30': 'YE',     # #FFFF25 - Yellow
+        'st31': 'YE',     # #FFFF25 - Yellow
+    }
+
+    segments = []
+
+    # Parse <line> elements
+    for line in root.iter('{http://www.w3.org/2000/svg}line'):
+        cls = line.get('class', '')
+        if cls in COLOR_MAP:
+            x1 = float(line.get('x1', 0))
+            y1 = float(line.get('y1', 0))
+            x2 = float(line.get('x2', 0))
+            y2 = float(line.get('y2', 0))
+
+            # Only keep horizontal lines (y1 ≈ y2)
+            if abs(y1 - y2) < 1.0:
+                segments.append(HorizontalWireSegment(
+                    x1=min(x1, x2),
+                    x2=max(x1, x2),
+                    y=(y1 + y2) / 2,
+                    color_class=cls,
+                    color_name=COLOR_MAP[cls]
+                ))
+
+    # Parse <path> elements (some horizontal wires are paths)
+    for path in root.iter('{http://www.w3.org/2000/svg}path'):
+        cls = path.get('class', '')
+        if cls in COLOR_MAP:
+            d = path.get('d', '').strip()
+            if not d:
+                continue
+
+            # Extract horizontal paths
+            # Format: M x,y c dx,dy,... or M x,y H x2 or M x,y h dx
+            match_m = re.match(r'M([\d.]+),([\d.]+)', d)
+            if not match_m:
+                continue
+
+            x1 = float(match_m.group(1))
+            y1 = float(match_m.group(2))
+
+            # Check for horizontal command (H or h)
+            match_h = re.search(r'[Hh]([\d.]+)', d)
+            if match_h:
+                if 'H' in d:  # Absolute
+                    x2 = float(match_h.group(1))
+                else:  # Relative
+                    x2 = x1 + float(match_h.group(1))
+
+                segments.append(HorizontalWireSegment(
+                    x1=min(x1, x2),
+                    x2=max(x1, x2),
+                    y=y1,
+                    color_class=cls,
+                    color_name=COLOR_MAP[cls]
+                ))
+
+            # Check for cubic bezier horizontal path (c dx,0,...)
+            # Pattern: M x,y c dx,0,dx2,0,dx3,0
+            elif 'c' in d.lower():
+                # Extract the 'c' command parameters
+                match_c = re.search(r'c([\d.,\s]+)', d)
+                if match_c:
+                    params = match_c.group(1).replace(',', ' ').split()
+                    if len(params) >= 6:
+                        # Parse cubic bezier: c dx1,dy1,dx2,dy2,dx,dy
+                        dx = float(params[4])
+                        dy = float(params[5])
+
+                        # Check if it's horizontal (dy ≈ 0)
+                        if abs(dy) < 1.0:
+                            x2 = x1 + dx
+                            segments.append(HorizontalWireSegment(
+                                x1=min(x1, x2),
+                                x2=max(x1, x2),
+                                y=y1,
+                                color_class=cls,
+                                color_name=COLOR_MAP[cls]
+                            ))
+
+    return segments
+
+
+def parse_vertical_dashed_wires(svg_file: str) -> List['VerticalWireSegment']:
+    """
+    Parse vertical dashed wire segments from SVG.
+
+    These are represented as <path class="st16"> elements with vertical 'c' commands
+    and represent vertical routing wires in grid-based diagrams.
+
+    Args:
+        svg_file: Path to SVG file
+
+    Returns:
+        List of VerticalWireSegment objects
+    """
+    from models import VerticalWireSegment
+
+    tree = ET.parse(svg_file)
+    root = tree.getroot()
+
+    segments = []
+
+    # Parse st16 path elements
+    for path in root.iter('{http://www.w3.org/2000/svg}path'):
+        cls = path.get('class', '')
+        if cls != 'st16':
+            continue
+
+        d = path.get('d', '').strip()
+        if not d:
+            continue
+
+        # Extract vertical paths
+        # Format: M x,y c 0,dy1,0,dy2,0,dy
+        match_m = re.match(r'M([\d.]+),([\d.]+)', d)
+        if not match_m:
+            continue
+
+        x = float(match_m.group(1))
+        y1 = float(match_m.group(2))
+
+        # Check for cubic bezier vertical path (c 0,dy,...)
+        # Pattern: M x,y c 0,dy1,0,dy2,0,dy
+        match_c = re.search(r'c([\d.,\s]+)', d)
+        if match_c:
+            params = match_c.group(1).replace(',', ' ').split()
+            if len(params) >= 6:
+                # Parse cubic bezier: c dx1,dy1,dx2,dy2,dx,dy
+                dx = float(params[4])
+                dy = float(params[5])
+
+                # Check if it's vertical (dx ≈ 0)
+                if abs(dx) < 1.0:
+                    y2 = y1 + dy
+                    segments.append(VerticalWireSegment(
+                        x=x,
+                        y1=min(y1, y2),
+                        y2=max(y1, y2),
+                        color_class='st16',
+                        color_name='dashed'
+                    ))
+
+    return segments

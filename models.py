@@ -101,3 +101,23 @@ class WireSpec:
     color: str
     x: float
     y: float
+
+
+@dataclass
+class HorizontalWireSegment:
+    """Represents a horizontal wire segment in a grid routing system."""
+    x1: float
+    x2: float
+    y: float
+    color_class: str  # CSS class like 'st8', 'st21', etc.
+    color_name: str  # Human-readable color like 'green', 'red', etc.
+
+
+@dataclass
+class VerticalWireSegment:
+    """Represents a vertical wire segment in a grid routing system."""
+    x: float
+    y1: float
+    y2: float
+    color_class: str  # Usually 'st16' for dashed lines
+    color_name: str  # Usually 'dashed' or 'black'

@@ -20,13 +20,17 @@ from svg_parser import (
     extract_path_all_points,
     extract_wire_specs,
     map_splice_positions_to_dots,
-    generate_ids_for_unlabeled_splices
+    generate_ids_for_unlabeled_splices,
+    parse_horizontal_colored_wires,
+    parse_vertical_dashed_wires
 )
 from extractors import (
     HorizontalWireExtractor,
     VerticalRoutingExtractor,
     GroundConnectionExtractor,
     LongRoutingConnectionExtractor,
+    GridWireExtractor,
+    HorizontalColoredWireExtractor,
     deduplicate_connections
 )
 from output_formatter import export_to_file, print_summary_statistics
@@ -154,7 +158,12 @@ def main():
     st1_paths = parse_st1_paths(svg_file)
     st0_paths = parse_routing_paths(svg_file, path_classes=['st0'], only_l_shaped=False)
     st3_st4_paths = parse_routing_paths(svg_file, path_classes=['st3', 'st4'], only_l_shaped=True)
-    routing_paths = st0_paths + st3_st4_paths
+    st13_paths = parse_routing_paths(svg_file, path_classes=['st13'], only_l_shaped=False)  # Black routing arrows
+    routing_paths = st0_paths + st3_st4_paths + st13_paths
+
+    # Parse grid routing wires (for grid-based diagrams)
+    horizontal_wires = parse_horizontal_colored_wires(svg_file)
+    vertical_wires = parse_vertical_dashed_wires(svg_file)
 
     text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
     text_elements = generate_ids_for_unlabeled_splices(text_elements, splice_dots, id_generator)
@@ -166,6 +175,18 @@ def main():
     horizontal_extractor = HorizontalWireExtractor(text_elements, wire_specs, all_polylines)
     horizontal_connections = horizontal_extractor.extract_connections()
     print(f"Extracted {len(horizontal_connections)} horizontal wire connections")
+
+    print("\n" + "=" * 80)
+    print("Extracting Colored Wire Connections (horizontal colored wires)")
+    print("=" * 80)
+    if horizontal_wires:
+        print(f"Found {len(horizontal_wires)} horizontal colored wires")
+        colored_wire_extractor = HorizontalColoredWireExtractor(text_elements, horizontal_wires, wire_specs)
+        colored_wire_connections = colored_wire_extractor.extract_connections()
+        print(f"Extracted {len(colored_wire_connections)} colored wire connections")
+    else:
+        print("No colored wires found")
+        colored_wire_connections = []
 
     print("\n" + "=" * 80)
     print("Extracting Routing Connections (polylines + routing paths)")
@@ -191,7 +212,7 @@ def main():
     long_routing_connections = long_routing_extractor.extract_connections()
     print(f"Extracted {len(long_routing_connections)} long routing connections")
 
-    combined = horizontal_connections + routing_connections + ground_connections + long_routing_connections
+    combined = horizontal_connections + colored_wire_connections + routing_connections + ground_connections + long_routing_connections
     all_connections = deduplicate_connections(combined)
     all_connections = apply_exclusions(all_connections, pin_exclusions, connection_exclusions)
 

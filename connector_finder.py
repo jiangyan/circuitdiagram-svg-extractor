@@ -84,9 +84,9 @@ def is_wire_spec(text: str) -> bool:
         text: Text to check
 
     Returns:
-        True if text matches wire spec pattern (e.g., "0.35,GY/PU")
+        True if text matches wire spec pattern (e.g., "0.35,GY/PU" or "0.35, GY/PU")
     """
-    return bool(re.match(r'^([\d.]+),([A-Z]{2}(?:/[A-Z]{2})?)$', text))
+    return bool(re.match(r'^([\d.]+),\s*([A-Z]{2}(?:/[A-Z]{2})?)$', text))
 
 
 def parse_wire_spec(text: str) -> Optional[Tuple[str, str]]:
@@ -99,7 +99,7 @@ def parse_wire_spec(text: str) -> Optional[Tuple[str, str]]:
     Returns:
         Tuple of (diameter, color) or None if not a wire spec
     """
-    match = re.match(r'^([\d.]+),([A-Z]{2}(?:/[A-Z]{2})?)$', text)
+    match = re.match(r'^([\d.]+),\s*([A-Z]{2}(?:/[A-Z]{2})?)$', text)
     if match:
         return match.group(1), match.group(2)
     return None
@@ -361,8 +361,9 @@ def find_connector_above_pin_prefer_ground(
         y_dist = pin_y - elem.y
 
         max_x_dist = 100 if is_junction_connector(elem.content) else 50
+        max_y_dist = 50  # Don't match connectors that are too far above the pin
 
-        if x_dist < max_x_dist and y_dist > 5:
+        if x_dist < max_x_dist and 5 < y_dist < max_y_dist:
             connectors_above.append((y_dist, elem.content, elem.x, elem.y))
 
     if not connectors_above:
@@ -457,9 +458,9 @@ def find_nearest_connection_point(
                                     if connectors_without_horizontal:
                                         connectors_above = connectors_without_horizontal
 
-                            # Pick the connector closest to the target (polyline endpoint)
-                            closest_connector = min(connectors_above,
-                                                   key=lambda c: math.sqrt((c[2] - target_x)**2 + (c[3] - target_y)**2))
+                            # Pick the connector closest to the PIN (by Y-distance)
+                            # connectors_above is already sorted by Y-distance, so first one is closest
+                            closest_connector = connectors_above[0]
                             nearest = ConnectionPoint(
                                 closest_connector[1],  # connector_id
                                 elem.content,          # pin
@@ -476,6 +477,18 @@ def find_nearest_connection_point(
                                 elem.x,
                                 elem.y
                             )
+
+    # Fallback: If no pins/splices found, look for regular connector IDs
+    # This handles diagrams where connectors don't have individual pin labels
+    if nearest is None:
+        for elem in text_elements:
+            if is_connector_id(elem.content) and '(' not in elem.content:  # Regular connectors (not ground)
+                dist = math.sqrt((elem.x - target_x)**2 + (elem.y - target_y)**2)
+
+                if dist < max_distance and dist < min_distance:
+                    min_distance = dist
+                    # Connector without pin
+                    nearest = ConnectionPoint(elem.content, '', elem.x, elem.y)
 
     return nearest
 
@@ -507,8 +520,9 @@ def find_all_connectors_above_pin(
         y_dist = pin_y - elem.y
 
         max_x_dist = 100 if is_junction_connector(elem.content) else 50
+        max_y_dist = 50  # Don't match connectors that are too far above the pin
 
-        if x_dist < max_x_dist and y_dist > 5:
+        if x_dist < max_x_dist and 5 < y_dist < max_y_dist:
             connectors_above.append((y_dist, elem.content, elem.x, elem.y))
 
     connectors_above.sort(key=lambda c: c[0])
