@@ -98,7 +98,11 @@ class ExtractionTester:
         all_polylines = parse_all_polylines(svg_file)  # Use all polylines for routing
         st17_paths = parse_st17_paths(svg_file)
         st1_paths = parse_st1_paths(svg_file)
-        routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # L-shaped routing wires
+        # Parse st0 without filter (horizontal segments for multi-path connections)
+        # Parse st3/st4 with filter (only L-shaped to avoid duplicates)
+        st0_paths = parse_routing_paths(svg_file, path_classes=['st0'], only_l_shaped=False)
+        st3_st4_paths = parse_routing_paths(svg_file, path_classes=['st3', 'st4'], only_l_shaped=True)
+        routing_paths = st0_paths + st3_st4_paths
 
         # Map splice positions
         text_elements = map_splice_positions_to_dots(text_elements, splice_dots)

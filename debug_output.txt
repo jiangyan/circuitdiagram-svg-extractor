@@ -1,0 +1,20 @@
+================================================================================
+Circuit Diagram Connection Extractor
+================================================================================
+Loaded 4 pin exclusions and 0 connection pair exclusions from exclusions_config.json
+Parsing SVG file...
+Traceback (most recent call last):
+  File "D:\repo\github\circuitdiagram-svg-extractor\extract_connections.py", line 257, in <module>
+    main()
+  File "D:\repo\github\circuitdiagram-svg-extractor\extract_connections.py", line 170, in main
+    text_elements = parse_text_elements(svg_file)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\repo\github\circuitdiagram-svg-extractor\svg_parser.py", line 21, in parse_text_elements
+    tree = ET.parse(svg_file)
+           ^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python3.12\Lib\xml\etree\ElementTree.py", line 1203, in parse
+    tree.parse(source, parser)
+  File "C:\Program Files\Python3.12\Lib\xml\etree\ElementTree.py", line 557, in parse
+    source = open(source, "rb")
+             ^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'test_casessplicepoints-has-no-id.svg'

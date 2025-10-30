@@ -404,9 +404,11 @@ class VerticalRoutingExtractor:
         # Only track PINS (not splice points), as splice points can have multiple connections
         self.pins_with_horizontal_wires = set()
         for conn in self.horizontal_connections:
-            # Only add if it's a real pin (has a pin number), not a splice point
+            # Add BOTH FROM and TO pins (only if they're real pins, not splice points)
             if conn.from_pin and not is_splice_point(conn.from_id):
                 self.pins_with_horizontal_wires.add((conn.from_id, conn.from_pin))
+            if conn.to_pin and not is_splice_point(conn.to_id):
+                self.pins_with_horizontal_wires.add((conn.to_id, conn.to_pin))
 
         # Also track splice points that have horizontal connections on BOTH sides
         # These are "pass-through" splices that shouldn't have additional routing
@@ -777,11 +779,6 @@ class VerticalRoutingExtractor:
                             if from_point.connector_id == to_point.connector_id:
                                 continue
 
-                            # Skip if has horizontal wire (for pins only, not splices)
-                            from_key = (from_point.connector_id, from_point.pin)
-                            if not is_splice_point(from_point.connector_id) and from_key in self.pins_with_horizontal_wires:
-                                continue
-
                             connections.append(Connection(
                                 from_id=from_point.connector_id,
                                 from_pin=from_point.pin,
@@ -981,6 +978,35 @@ class VerticalRoutingExtractor:
                 else:
                     # Both splices, both non-splices, or other cases → use path order
                     source, dest = cp1, cp2
+
+                # Skip if this SPECIFIC connection already exists in horizontal wires
+                connection_already_exists = any(
+                    (conn.from_id == source.connector_id and conn.from_pin == source.pin and
+                     conn.to_id == dest.connector_id and conn.to_pin == dest.pin) or
+                    (conn.from_id == dest.connector_id and conn.from_pin == dest.pin and
+                     conn.to_id == source.connector_id and conn.to_pin == source.pin)
+                    for conn in self.horizontal_connections
+                )
+                if connection_already_exists:
+                    continue
+
+                # CRITICAL: Skip if EXACT same source connector+pin and dest pin, but different dest connector
+                # This happens when st1 path connects MH097,12 → pin 17, but picks wrong connector above pin 17
+                # Example: Horizontal has MH097,12 → MH020,17, st1 path creates MH097,12 → RRS100,17
+                # Both connect pin 12 to pin 17, but to different connectors above the same physical pin 17
+                same_source_different_dest_connector = any(
+                    # Exact same source (connector+pin) and destination pin number, but different destination connector
+                    (conn.from_id == source.connector_id and conn.from_pin == source.pin and
+                     conn.to_pin == dest.pin and conn.to_id != dest.connector_id and
+                     not is_splice_point(conn.to_id) and not is_splice_point(dest.connector_id)) or
+                    # Or reverse direction
+                    (conn.to_id == source.connector_id and conn.to_pin == source.pin and
+                     conn.from_pin == dest.pin and conn.from_id != dest.connector_id and
+                     not is_splice_point(conn.from_id) and not is_splice_point(dest.connector_id))
+                    for conn in self.horizontal_connections
+                )
+                if same_source_different_dest_connector:
+                    continue
 
                 # Create connection
                 connections.append(Connection(

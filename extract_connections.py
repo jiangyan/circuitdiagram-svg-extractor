@@ -173,7 +173,13 @@ def main():
     all_polylines = parse_all_polylines(svg_file)
     st17_paths = parse_st17_paths(svg_file)
     st1_paths = parse_st1_paths(svg_file)
-    routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # Only TRUE L-shaped wires (with vertical segments)
+    # Parse routing paths from st0, st3, st4 classes
+    # st0: Additional routing paths - include ALL (horizontal segments for multi-path connections)
+    # st3, st4: L-shaped routing wires - filter to only L-shaped to avoid duplicates with wire specs
+    # CRITICAL: st0 horizontal paths bridge gaps in multi-segment connections (e.g., MH228,41→SP249)
+    st0_paths = parse_routing_paths(svg_file, path_classes=['st0'], only_l_shaped=False)
+    st3_st4_paths = parse_routing_paths(svg_file, path_classes=['st3', 'st4'], only_l_shaped=True)
+    routing_paths = st0_paths + st3_st4_paths
 
     print(f"Parsed {len(text_elements)} text elements")
     print(f"Parsed {len(splice_dots)} splice point dots")
@@ -181,7 +187,8 @@ def main():
     print(f"Found {len(all_polylines)} total polyline elements (including routing)")
     print(f"Found {len(st17_paths)} st17 path elements (ground arrows)")
     print(f"Found {len(st1_paths)} st1 path elements (white routing wires)")
-    print(f"Found {len(routing_paths)} st3/st4 path elements (L-shaped routing wires)")
+    print(f"Found {len(st0_paths)} st0 path elements (multi-path routing segments)")
+    print(f"Found {len(st3_st4_paths)} st3/st4 path elements (L-shaped routing wires)")
 
     # Step 2: Map splice positions to dots
     text_elements = map_splice_positions_to_dots(text_elements, splice_dots)
@@ -207,6 +214,7 @@ def main():
     print("=" * 80)
     # Combine st1 and st3/st4 paths
     all_routing_paths = st1_paths + routing_paths
+    # For routing extraction, use only L-shaped paths (not horizontal ones that would duplicate wire specs)
     routing_extractor = VerticalRoutingExtractor(all_polylines, all_routing_paths, text_elements, wire_specs, horizontal_connections)
     routing_connections = routing_extractor.extract_connections()
     print(f"Extracted {len(routing_connections)} routing connections (polylines + routing paths)")
