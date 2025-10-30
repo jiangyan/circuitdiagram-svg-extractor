@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 22
+**Total Connections:** 21
 
 ## All Connections (Sorted by From Connector)
 
@@ -15,7 +15,6 @@
 | MH228 | 41 | MH022 | 40 | 0.35 | PU/RD |
 | MH614 | 21 | SP198 |  | 0.35 | BU/BK |
 | MH614 | 22 | SP199 |  | 0.35 | PU/OG |
-| MH614 | 22 | SP198 |  | 0.35 | PU/OG |
 | RLS101 | 22 | RLS100 | 22 | 0.35 | WH |
 | RLS101 | 23 | RLS100 | 23 | 0.35 | GY |
 | RLSS370_A | 22 | RLSS100 | 40 | 0.35 | BU/WH |
@@ -24,8 +23,8 @@
 | RRSF007 | 23 | RRSF100 | 41 | 0.35 | YE/GN |
 | RRSS380_A | 22 | RRSS100 | 40 | 0.35 | BU/WH |
 | RRSS380_A | 23 | RRSS100 | 41 | 0.35 | BU/RD |
-| SP198 |  | SP199 |  | 0.35 | PU/OG |
-| SP250 |  | SP249 |  | 0.35 | BU/BK |
+| SP198 |  | SP250 |  | 0.35 | BU/BK |
+| SP199 |  | SP249 |  | 0.35 | PU/OG |
 | TGL11 | 3 | TGL614 | 21 | 0.35 | BU/BK |
 | TGL11 | 4 | TGL614 | 22 | 0.35 | PU/OG |
 
@@ -58,13 +57,12 @@
 |----------|-----|--------|---------|-------|
 | 41 | MH022 | 40 | 0.35 | PU/RD |
 
-### MH614 (3 connections)
+### MH614 (2 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 21 | SP198 |  | 0.35 | BU/BK |
 | 22 | SP199 |  | 0.35 | PU/OG |
-| 22 | SP198 |  | 0.35 | PU/OG |
 
 ### RLS101 (2 connections)
 
@@ -98,13 +96,13 @@
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-|  | SP199 |  | 0.35 | PU/OG |
+|  | SP250 |  | 0.35 | BU/BK |
 
-### SP250 (1 connections)
+### SP199 (1 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
-|  | SP249 |  | 0.35 | BU/BK |
+|  | SP249 |  | 0.35 | PU/OG |
 
 ### TGL11 (2 connections)
 

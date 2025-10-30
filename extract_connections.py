@@ -26,6 +26,7 @@ from extractors import (
     HorizontalWireExtractor,
     VerticalRoutingExtractor,
     GroundConnectionExtractor,
+    LongRoutingConnectionExtractor,
     deduplicate_connections
 )
 from output_formatter import export_to_file, print_summary_statistics
@@ -227,12 +228,24 @@ def main():
     ground_connections = ground_extractor.extract_connections()
     print(f"Extracted {len(ground_connections)} ground connections")
 
-    # Step 7: Combine all connections and deduplicate globally
+    # Step 7: Extract long routing connections (based on wire color flow analysis)
+    print("\n" + "=" * 80)
+    print("Extracting Long Routing Connections (wire color flow)")
+    print("=" * 80)
+    # CRITICAL: Apply exclusions BEFORE wire flow analysis
+    # False connections (e.g., MH614,22 → SP198) would pollute the wire flow calculation
+    combined_for_flow = horizontal_connections + routing_connections + ground_connections
+    combined_for_flow = apply_exclusions(combined_for_flow, pin_exclusions, connection_exclusions)
+    long_routing_extractor = LongRoutingConnectionExtractor(combined_for_flow, text_elements)
+    long_routing_connections = long_routing_extractor.extract_connections()
+    print(f"Extracted {len(long_routing_connections)} long routing connections")
+
+    # Step 8: Combine all connections and deduplicate globally
     # (Each extractor deduplicates internally, but we need global dedup across extractors)
-    combined = horizontal_connections + routing_connections + ground_connections
+    combined = horizontal_connections + routing_connections + ground_connections + long_routing_connections
     all_connections = deduplicate_connections(combined)
 
-    # Step 7b: Apply exclusions for reference-only pins and specific connection pairs
+    # Step 8b: Apply exclusions again for any connections created by long routing extractor
     all_connections = apply_exclusions(all_connections, pin_exclusions, connection_exclusions)
 
     print("\n" + "=" * 80)
@@ -241,7 +254,7 @@ def main():
         print(f"  (Removed {len(combined) - len(all_connections)} duplicates across extractors)")
     print("=" * 80)
 
-    # Step 8: Export to file
+    # Step 9: Export to file
     export_to_file(all_connections, output_file)
 
     # Print summary by type

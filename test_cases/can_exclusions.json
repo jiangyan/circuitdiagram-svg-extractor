@@ -1,0 +1,23 @@
+{
+  "description": "Exclusions for can.svg - filters false connections from incorrect wire grouping",
+  "exclusions": [
+    {
+      "connector_id": "RRS111",
+      "pin": "22",
+      "reason": "Reference connection to external diagram"
+    },
+    {
+      "connector_id": "RRS111",
+      "pin": "23",
+      "reason": "Reference connection to external diagram"
+    }
+  ],
+  "connection_exclusions": [],
+  "notes": [
+    "Connection exclusions were removed - no longer needed!",
+    "False connections (e.g., MH614,22 → SP198) are now algorithmically filtered by:",
+    "1. Short-distance splice-to-splice filter (< 400 units)",
+    "2. Wire color consistency validation (rejects connections with color mismatch)",
+    "Only pin exclusions remain (RRS111 external references - domain knowledge)"
+  ]
+}
