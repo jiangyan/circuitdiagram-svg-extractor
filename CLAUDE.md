@@ -434,7 +434,120 @@ routing_paths = parse_routing_paths(svg_file, only_l_shaped=True)  # Only TRUE L
 - `h dx` - Relative horizontal line
 - `H x` - Absolute horizontal line
 
-### 8. Pass-Through Splice Point Filtering
+### 8. Rectangular Polyline Routing Wires
+
+**Edge Case:** Some circuit diagrams use rectangular polylines (4-point H-V-H pattern) to connect components at different vertical levels.
+
+**Pattern Recognition:**
+```python
+# A rectangular polyline has 4 points forming 3 sides: H-V-H
+# Structure: point1 → point2 → point3 → point4
+is_rectangular = (
+    len(path_points) == 4 and
+    abs(path_points[0][1] - path_points[1][1]) < 5 and  # First segment horizontal
+    abs(path_points[1][0] - path_points[2][0]) < 5 and  # Second segment vertical
+    abs(path_points[2][1] - path_points[3][1]) < 5      # Third segment horizontal
+)
+```
+
+**Examples:**
+- UH07 ↔ UH08 (orange wire forming rectangle)
+- SR02 ↔ SR03 (multiple colored wires, each forming rectangle)
+- MAIN14,1 → G203B(m) (4.0, BK ground connection via rectangular path)
+
+**Critical Implementation Details:**
+
+**1. Corner Endpoint Detection (15-unit threshold):**
+
+```python
+# Find connectors/pins near all 4 corners
+for px, py in path_points:
+    min_dist = 15  # Tight threshold to match only true endpoints
+
+    for elem in text_elements:
+        dist = math.sqrt((elem.x - px)**2 + (elem.y - py)**2)
+        if dist < min_dist:
+            if is_connector_id(elem.content) or elem.content.isdigit() or is_splice_point(elem.content):
+                nearest_connector = elem
+```
+
+**Why 15 units:**
+- Valid endpoints: UH07 (10.6), UH08 (10.1), G203B(m) (12.7), pins (5-8 units)
+- Excludes incidental labels: MAIN14 at 15.8 units (too far), G202(m) at 50 units (way too far)
+
+**2. Wire Spec Selection (Longest Horizontal Segment):**
+
+Rectangular polylines have multiple horizontal segments. The wire spec is positioned on the **longest** segment (main wire), not the short entry segment.
+
+```python
+def _find_wire_spec_for_rectangular_polyline(path_points):
+    """Find wire spec on the longest horizontal segment."""
+
+    # Find all horizontal segments and their lengths
+    horizontal_segments = []
+    for i in range(len(path_points) - 1):
+        x1, y1 = path_points[i]
+        x2, y2 = path_points[i + 1]
+        if abs(y2 - y1) < 5:  # Horizontal
+            length = abs(x2 - x1)
+            horizontal_segments.append((length, x1, y1, x2, y2))
+
+    # Sort by length (longest first)
+    horizontal_segments.sort(reverse=True)
+
+    # Find wire spec on longest segment
+    _, x1, y1, x2, y2 = horizontal_segments[0]
+    # ... search for spec between x1 and x2, within ±15 Y units
+```
+
+**Example:**
+
+MAIN14,1 → G203B(m) polyline:
+- Short segment at Y=204.9 with "2.5, BK" (SR01-SR02 wire)
+- **Long segment at Y=155.4 with "4.0, BK"** ← Selected!
+
+**3. Wire Spec Conflict Resolution (Shared Pin Disambiguation):**
+
+When a pin has multiple connectors above it and already has a horizontal wire with a different wire spec, select the alternative connector.
+
+```python
+# Pin 1 at (649.71, 207.07) has TWO connectors above:
+# - SR01 (16.29 units away) - already has horizontal wire with "2.5, BK"
+# - MAIN14 (26.55 units away)
+
+# Check if primary connector (SR01) already has a horizontal wire
+existing_wire_spec = None
+for conn in horizontal_connections:
+    if conn.from_id == primary_connector and conn.from_pin == pin_num:
+        existing_wire_spec = (conn.wire_dm, conn.wire_color)
+        break
+
+# Get polyline's wire spec (4.0, BK from longest segment)
+polyline_wire_spec = self._find_wire_spec_for_rectangular_polyline(path_points)
+
+# If specs conflict, use alternative connector
+if existing_wire_spec and existing_wire_spec != polyline_wire_spec:
+    all_connectors = find_all_connectors_above_pin(pin_x, pin_y, text_elements)
+    for _, alt_conn_id, alt_x, alt_y in all_connectors:
+        if alt_conn_id != primary_connector:
+            conn_result = (alt_conn_id, alt_x, alt_y)
+            break
+```
+
+**Result:** Pin 1 correctly assigned to MAIN14 (not SR01), creating connection MAIN14,1 → G203B(m) with wire spec 4.0, BK.
+
+**Why This Matters:**
+
+- Pins can have multiple connections: ONE horizontal wire + multiple vertical routing paths
+- But each wire spec must match the physical wire (different specs = different connectors)
+- This disambiguation ensures correct connector assignment when pins are shared
+
+**Key Rule:**
+
+✅ **ALLOWED:** Pin has one horizontal wire (2.5, BK to SR02) + one vertical routing wire (4.0, BK to G203B(m))
+❌ **FORBIDDEN:** Pin connects to two different destinations with the SAME wire spec (duplicate horizontal wires)
+
+### 9. Pass-Through Splice Point Filtering
 
 **Edge Case:** Splice points that act as "pass-throughs" for horizontal wires.
 
@@ -510,7 +623,7 @@ class VerticalRoutingExtractor:
 For polylines with intermediate splices (e.g., `pin1 → splice → pin2`):
 
 ```python
-# In multi-segment polyline code (lines 300-335 of extractors.py)
+# In VerticalRoutingExtractor (extractors/vertical_routing_extractor.py)
 if splice_found:
     # Connection 1: endpoint1 → splice
     if not (endpoint1.connector_id in self.passthrough_splices and
@@ -675,6 +788,7 @@ Additional section groups connections by source connector with statistics:
 5. **Pin-pair deduplication** - Handles overlapping wire specifications
 6. **Smart L-shaped path filtering** - Only parse st3/st4 paths with vertical segments ('v' or 'V' commands)
 7. **Pass-through splice detection** - Track splices with horizontal wires on both sides, filter routing connections between them
+8. **Modular extractor architecture** - Split 2175-line monolith into focused modules with inheritance for shared utilities
 
 ## Architecture (Refactored - Current Version)
 
@@ -683,16 +797,28 @@ The codebase has been refactored into a modular architecture for better maintain
 ### Module Structure
 
 ```
-extract_connections.py    # Main entry point
-├── models.py            # Data structures (Connection, TextElement, WireSpec, etc.)
-├── svg_parser.py        # SVG parsing utilities
-├── connector_finder.py  # Connector identification and lookup logic
-├── extractors.py        # Connection extraction classes
-│   ├── HorizontalWireExtractor
-│   ├── VerticalRoutingExtractor
-│   └── GroundConnectionExtractor
-└── output_formatter.py  # Output formatting and export
+extract_connections.py          # Main entry point
+├── models.py                  # Data structures (Connection, TextElement, WireSpec, etc.)
+├── svg_parser.py              # SVG parsing utilities
+├── connector_finder.py        # Connector identification and lookup logic
+├── output_formatter.py        # Output formatting and export
+└── extractors/                # Connection extraction package (modular)
+    ├── __init__.py           # Package initialization, exports all extractors
+    ├── base_extractor.py     # Base class with shared utilities
+    ├── horizontal_wire_extractor.py
+    ├── horizontal_colored_wire_extractor.py
+    ├── vertical_routing_extractor.py
+    ├── ground_connection_extractor.py
+    ├── long_routing_connection_extractor.py
+    └── grid_wire_extractor.py
 ```
+
+**Benefits of Modular Architecture:**
+- **Clarity**: Each extractor has its own file (~150-400 lines vs 2175-line monolith)
+- **Maintainability**: Changes to one extractor don't affect others
+- **Testability**: Individual extractors can be tested in isolation
+- **Reusability**: BaseExtractor shares common utilities (wire spec detection, deduplication)
+- **Scalability**: New extractor types can be added without modifying existing code
 
 ### Key Data Structures (models.py)
 
@@ -763,31 +889,121 @@ def find_connector_above_pin(
     """
 ```
 
-### Extractors (extractors.py)
+### Extractors Package (extractors/)
 
-Three specialized extraction classes:
+The extraction logic is organized into a modular package with a base class and specialized extractors:
 
-1. **HorizontalWireExtractor** - Wire-centric algorithm for horizontal wires
-   - Groups connection points by horizontal line
-   - Creates connections between ALL ADJACENT PAIRS
+#### Base Extractor (base_extractor.py)
+
+`BaseExtractor` provides shared utilities for all extractors:
+
+```python
+class BaseExtractor:
+    def __init__(self, text_elements: List[TextElement], wire_specs: List[WireSpec]):
+        self.text_elements = text_elements
+        self.wire_specs = wire_specs
+
+    def _find_wire_spec_for_rectangular_polyline(self, path_points) -> Tuple[str, str]:
+        """Find wire spec on LONGEST horizontal segment of rectangular polyline."""
+        # Returns (diameter, color) from longest horizontal segment
+
+    def _find_wire_spec_near_path(self, path_points, source_point=None) -> Tuple[str, str]:
+        """Find wire spec closest to routing path, prioritizing segment near source."""
+        # Returns (diameter, color) from horizontal segment closest to source
+```
+
+Also includes `deduplicate_connections()` function for global deduplication.
+
+#### Specialized Extractors
+
+**1. HorizontalWireExtractor** (`horizontal_wire_extractor.py`)
+   - Wire-centric algorithm for horizontal wires with specs
+   - Groups connection points by horizontal line (±10 Y units)
+   - Creates connections between ALL ADJACENT PAIRS on same line
    - Handles junction selection with source_x context
+   - Primary extractor for most connections
 
-2. **VerticalRoutingExtractor** - Processes st17 polylines, st1 paths, and st3/st4 routing paths
+**2. HorizontalColoredWireExtractor** (`horizontal_colored_wire_extractor.py`)
+   - Handles horizontal colored wires in non-grid diagrams
+   - Uses wire color flow instead of wire specs
+
+**3. VerticalRoutingExtractor** (`vertical_routing_extractor.py`) **[inherits BaseExtractor]**
    - Processes st17 polylines (vertical routing arrows)
    - Processes st1 paths (white routing wires)
    - Processes st3/st4 paths (L-shaped routing wires with vertical segments)
+   - Processes rectangular polylines (4-point H-V-H pattern)
    - Tracks pass-through splices (splices with horizontal wires on both sides)
    - Finds nearest connection points to polyline/path endpoints
    - Handles multi-segment polylines with intermediate splices
    - Filters routing connections between two pass-through splices
    - Allows connections from pass-through splices to pins
+   - Uses inherited methods for wire spec detection
    - Deduplicates before returning
 
-3. **GroundConnectionExtractor** - Processes st17 paths
+**4. GroundConnectionExtractor** (`ground_connection_extractor.py`) **[inherits BaseExtractor]**
+   - Processes st17 paths (ground connection arrows)
    - Finds connection points within 120 units of path arrow
    - Only creates connections involving ground connectors (with parentheses)
    - Prefers *2FL junction variants
    - Deduplicates before returning
+
+**5. LongRoutingConnectionExtractor** (`long_routing_connection_extractor.py`)
+   - Handles long-distance splice-to-splice connections
+   - Uses wire color flow to trace multi-hop paths
+
+**6. GridWireExtractor** (`grid_wire_extractor.py`)
+   - Handles grid-based routing diagrams
+   - Different coordinate system from standard diagrams
+
+#### Why the Refactoring?
+
+The original `extractors.py` file grew to **2175 lines** with 6 complex extractor classes. This created several challenges:
+
+- **Navigation**: Finding specific logic required scrolling through thousands of lines
+- **Code Duplication**: Wire spec detection methods were duplicated in multiple extractors
+- **Testing**: Difficult to test individual extractors in isolation
+- **Maintenance**: Changes to one extractor risked breaking others
+- **Onboarding**: New contributors faced a steep learning curve
+
+The modular architecture solves these by:
+1. **Single Responsibility**: Each file has one clear purpose (~150-400 lines)
+2. **Inheritance**: `BaseExtractor` eliminates duplication of wire spec logic
+3. **Encapsulation**: Changes to one extractor don't affect others
+4. **Discoverability**: File names clearly indicate what each extractor does
+5. **Extensibility**: New diagram types can add extractors without modifying existing code
+
+#### BaseExtractor Inheritance Pattern
+
+```python
+# VerticalRoutingExtractor inherits shared utilities
+from .base_extractor import BaseExtractor
+
+class VerticalRoutingExtractor(BaseExtractor):
+    def __init__(self, polylines, routing_paths, text_elements, wire_specs, horizontal_connections):
+        # Initialize base class with shared data
+        super().__init__(text_elements, wire_specs)
+        # Initialize extractor-specific data
+        self.polylines = polylines
+        self.routing_paths = routing_paths
+        # ...
+
+    def extract_connections(self):
+        # Use inherited method for rectangular polylines
+        wire_spec = self._find_wire_spec_for_rectangular_polyline(path_points)
+
+        # Use inherited method for normal routing paths
+        wire_spec = self._find_wire_spec_near_path(path_points, source_point)
+```
+
+**Extractors using BaseExtractor:**
+- `VerticalRoutingExtractor` - Uses both inherited wire spec methods
+- `GroundConnectionExtractor` - Uses `_find_wire_spec_near_path()`
+
+**Extractors NOT using BaseExtractor:**
+- `HorizontalWireExtractor` - Has its own wire spec logic (groups by horizontal line)
+- `HorizontalColoredWireExtractor` - Uses color flow, no wire specs
+- `LongRoutingConnectionExtractor` - Uses color flow, no wire specs
+- `GridWireExtractor` - Different coordinate system, independent logic
 
 ### Critical: Ground Connection Distance Threshold
 
@@ -802,6 +1018,27 @@ This prevents distant splice points from being incorrectly associated with groun
 ### Execution Flow
 
 ```python
+# Imports from modular architecture
+from extractors import (
+    HorizontalWireExtractor,
+    VerticalRoutingExtractor,
+    GroundConnectionExtractor,
+    deduplicate_connections
+)
+from models import IDGenerator
+from svg_parser import (
+    parse_text_elements,
+    parse_splice_dots,
+    parse_all_polylines,
+    parse_st17_paths,
+    parse_st1_paths,
+    parse_routing_paths,
+    map_splice_positions_to_dots,
+    generate_ids_for_unlabeled_splices,
+    extract_wire_specs
+)
+from output_formatter import export_to_file
+
 # 0. Initialize ID generator for unlabeled splice points
 id_generator = IDGenerator()
 
@@ -857,14 +1094,26 @@ If you're an AI agent working with similar SVG files, see **[wire-relation-promp
 
 ## Key Files
 
-- `extract_connections.py` - Main entry point
-- `models.py` - Data structures
-- `svg_parser.py` - SVG parsing utilities
-- `connector_finder.py` - Connector identification and lookup
-- `extractors.py` - Connection extraction classes
-- `output_formatter.py` - Output formatting
+**Core Modules:**
+- `extract_connections.py` - Main entry point and orchestration
+- `models.py` - Data structures (Connection, TextElement, WireSpec, IDGenerator)
+- `svg_parser.py` - SVG parsing utilities for text, paths, polylines
+- `connector_finder.py` - Connector identification and sophisticated junction handling
+- `output_formatter.py` - Output formatting and markdown export
+
+**Extractors Package (`extractors/`):**
+- `base_extractor.py` - Base class with shared wire spec detection utilities
+- `horizontal_wire_extractor.py` - Primary extractor for wires with specs
+- `vertical_routing_extractor.py` - Routing wires, polylines, rectangular paths
+- `ground_connection_extractor.py` - Ground connections (st17 paths)
+- `horizontal_colored_wire_extractor.py` - Color flow-based extraction
+- `long_routing_connection_extractor.py` - Multi-hop splice connections
+- `grid_wire_extractor.py` - Grid-based diagrams
+
+**Test Files:**
 - `sample-wire.svg` - Example circuit diagram
-- `connections_output.md` - Generated connection table
+- `test_cases/` - Additional test SVG files
+- `connections_output.md` - Generated connection table output
 - `diagram.png` - Visual reference of the circuit
 
 ## Vertical Routing and Ground Connections
