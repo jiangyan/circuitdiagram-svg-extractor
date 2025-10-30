@@ -603,12 +603,8 @@ def generate_ids_for_unlabeled_splices(
     # Generate IDs for unlabeled dots
     result = list(text_elements)  # Copy existing elements
 
-    if unlabeled_dots:
-        print(f"Found {len(unlabeled_dots)} unlabeled splice dots - generating custom IDs")
-
     for dot_x, dot_y in unlabeled_dots:
         custom_id = id_generator.get_or_create_splice_id(dot_x, dot_y)
         result.append(TextElement(custom_id, dot_x, dot_y))
-        print(f"  Generated {custom_id} at ({dot_x:.1f}, {dot_y:.1f})")
 
     return result

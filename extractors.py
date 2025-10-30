@@ -276,12 +276,8 @@ class HorizontalWireExtractor:
                             # There's a splice between - skip this direct connection
                             continue
 
-                    # CRITICAL: Skip connections if there's a DIFFERENT connector LABEL between the connection points
-                    # ONLY when connecting to a SPLICE (not for pin-to-pin connections)
-                    # Even if the connector has no pins on this line, its label acts as a module boundary
-                    # Example: Pin 15 (RR626) should not connect to SP305 if RRT626 label is between them
-                    # BUT: Pin 11 (RLS200) CAN connect to SP_CUSTOM_006 even if RLS200 label is between (it's the pin's own connector!)
-                    # This prevents false connections across module boundaries on long horizontal buses
+                    # Skip connections with different connector labels between (module boundary filter)
+                    # Only applies to splice connections, allows own connector label
                     if is_splice_point(left_id) or is_splice_point(right_id):
                         # Collect connectors that own the endpoints (don't count these as boundaries)
                         own_connectors = set()
@@ -301,43 +297,28 @@ class HorizontalWireExtractor:
                         ]
 
                         if connectors_between:
-                            # CRITICAL: Allow passing through junction pair labels
-                            # Example: SP167 → MH2FL,5 should not be blocked by FL2MH label between them
-                            # MH2FL and FL2MH are junction pairs sharing the same pins
-                            # Check if ALL connectors between are junction pairs with the destination
+                            # Allow passing through junction pair labels (e.g., MH2FL/FL2MH share pins)
                             def is_junction_pair(conn1, conn2):
-                                """Check if two connectors are a junction pair (share pins)."""
-                                # Junction pairs: MH2FL/FL2MH, FTL2FL/FL2FTL, etc.
-                                # Check if both connectors contain '2FL' or 'FL2'
-                                has_junction1 = '2FL' in conn1 or 'FL2' in conn1
-                                has_junction2 = '2FL' in conn2 or 'FL2' in conn2
-
-                                if has_junction1 and has_junction2:
-                                    # Extract the middle parts: MH2FL → MH, FL2MH → MH
-                                    if 'FL2' in conn1:
-                                        part1 = conn1.replace('FL2', '')
-                                    else:
-                                        part1 = conn1.replace('2FL', '')
-                                    if 'FL2' in conn2:
-                                        part2 = conn2.replace('FL2', '')
-                                    else:
-                                        part2 = conn2.replace('2FL', '')
-                                    return part1 == part2
+                                """Check if two connectors are junction pairs (PREFIX1+2+PREFIX2 ↔ PREFIX2+2+PREFIX1)."""
+                                if '2' not in conn1 or '2' not in conn2:
+                                    return False
+                                # Split on '2' and check if they're mirrors
+                                parts1 = conn1.split('2', 1)
+                                parts2 = conn2.split('2', 1)
+                                if len(parts1) == 2 and len(parts2) == 2:
+                                    # Check if parts are swapped: (A,B) vs (B,A)
+                                    return parts1[0] == parts2[1] and parts1[1] == parts2[0]
                                 return False
 
-                            # Check if all connectors between are junction pairs with destination
                             all_are_junction_pairs = all(
                                 is_junction_pair(conn, right_id) or is_junction_pair(conn, left_id)
                                 for conn in connectors_between
                             )
 
                             if not all_are_junction_pairs:
-                                # There's a different connector boundary between - skip this connection
                                 continue
 
-                    # CRITICAL: Skip connections between pins from different, distant connectors
-                    # This prevents false connections between separate modules on the same line
-                    # Use connector coordinates from _find_endpoint (already found by find_connector_above_pin)
+                    # Skip connections between pins from distant connectors (separate modules)
                     if not is_splice_point(left_id) and not is_splice_point(right_id) and left_id != right_id:
                         # Check if connectors are far apart (>100 units)
                         if left_conn_x and right_conn_x:
@@ -1074,16 +1055,11 @@ class VerticalRoutingExtractor:
                 if connection_already_exists:
                     continue
 
-                # CRITICAL: Skip if EXACT same source connector+pin and dest pin, but different dest connector
-                # This happens when st1 path connects MH097,12 → pin 17, but picks wrong connector above pin 17
-                # Example: Horizontal has MH097,12 → MH020,17, st1 path creates MH097,12 → RRS100,17
-                # Both connect pin 12 to pin 17, but to different connectors above the same physical pin 17
+                # Skip if same source+dest pin but different dest connector (wrong connector above shared pin)
                 same_source_different_dest_connector = any(
-                    # Exact same source (connector+pin) and destination pin number, but different destination connector
                     (conn.from_id == source.connector_id and conn.from_pin == source.pin and
                      conn.to_pin == dest.pin and conn.to_id != dest.connector_id and
                      not is_splice_point(conn.to_id) and not is_splice_point(dest.connector_id)) or
-                    # Or reverse direction
                     (conn.to_id == source.connector_id and conn.to_pin == source.pin and
                      conn.from_pin == dest.pin and conn.from_id != dest.connector_id and
                      not is_splice_point(conn.from_id) and not is_splice_point(dest.connector_id))
@@ -1092,19 +1068,12 @@ class VerticalRoutingExtractor:
                 if same_source_different_dest_connector:
                     continue
 
-                # CRITICAL: Skip if same destination but source is same physical pin assigned to different connector
-                # Example: Horizontal has RR626,15 → MH020,17, st1 path tries to create RRT626,15 → MH020,17
-                # Pin 15 can only belong to one connector!
-                # BUT: This filter should NOT apply when destination is a SPLICE POINT
-                # Splices can have multiple incoming connections from different pins with same number
-                # Example: SP305 can connect to BOTH RRT14,1 AND RRT15,1
+                # Skip if same dest but different source connector (unless dest is splice - splices allow multiple sources)
                 if not is_splice_point(dest.connector_id):
                     same_dest_different_source_connector = any(
-                        # Same destination (splice or pin) and same source pin number, but different source connector
                         (conn.to_id == dest.connector_id and conn.to_pin == dest.pin and
                          conn.from_pin == source.pin and conn.from_id != source.connector_id and
                          not is_splice_point(conn.from_id) and not is_splice_point(source.connector_id)) or
-                        # Or reverse direction
                         (conn.from_id == dest.connector_id and conn.from_pin == dest.pin and
                          conn.to_pin == source.pin and conn.to_id != source.connector_id and
                          not is_splice_point(conn.to_id) and not is_splice_point(source.connector_id))
@@ -1113,8 +1082,7 @@ class VerticalRoutingExtractor:
                     if same_dest_different_source_connector:
                         continue
 
-                # CRITICAL: Skip short-distance splice-to-splice connections
-                # These are handled by LongRoutingConnectionExtractor with color flow analysis
+                # Skip short-distance splice-to-splice connections (handled by LongRoutingConnectionExtractor)
                 both_splices = (is_splice_point(source.connector_id) and
                               is_splice_point(dest.connector_id))
                 if both_splices:

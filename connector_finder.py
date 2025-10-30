@@ -6,6 +6,25 @@ import math
 from typing import List, Optional, Tuple
 from models import TextElement, ConnectionPoint
 
+# Junction configuration: central junction identifier in automotive wiring
+# Convention: PREFIX+2+JUNCTION_ID = destination, JUNCTION_ID+2+PREFIX = source
+JUNCTION_ID = 'FL'  # Front Left junction point
+
+
+def is_destination_junction(connector_id: str) -> bool:
+    """Check if junction connector is a destination (*2JUNCTION_ID pattern)."""
+    return connector_id.endswith(f'2{JUNCTION_ID}')
+
+
+def is_source_junction(connector_id: str) -> bool:
+    """Check if junction connector is a source (JUNCTION_ID2* pattern)."""
+    return connector_id.startswith(f'{JUNCTION_ID}2')
+
+
+def is_junction_connector(connector_id: str) -> bool:
+    """Check if connector is a junction (contains JUNCTION_ID with '2')."""
+    return f'2{JUNCTION_ID}' in connector_id or f'{JUNCTION_ID}2' in connector_id
+
 
 def is_connector_id(text: str) -> bool:
     """
@@ -252,22 +271,19 @@ def find_connector_above_pin(
 
             if junc1_between and junc2_between:
                 # Both between: prefer based on prefer_as_source rule
-                # For destinations (prefer_as_source=False), prefer *2FL variants
-                # For sources (prefer_as_source=True), prefer FL2* variants
-                # This overrides geometric proximity!
                 if not prefer_as_source:
-                    # Destination: prefer *2FL variant (e.g., MH2FL over FL2MH)
-                    if junc1[3].endswith('2FL'):
+                    # Destination: prefer destination junction variant
+                    if is_destination_junction(junc1[3]):
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    elif junc2[3].endswith('2FL'):
+                    elif is_destination_junction(junc2[3]):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                     else:
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
                 else:
-                    # Source: prefer FL2* variant (e.g., FL2MH over MH2FL)
-                    if junc1[3].startswith('FL2'):
+                    # Source: prefer source junction variant
+                    if is_source_junction(junc1[3]):
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    elif junc2[3].startswith('FL2'):
+                    elif is_source_junction(junc2[3]):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                     else:
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
@@ -279,41 +295,37 @@ def find_connector_above_pin(
                 conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
             else:
                 # Neither between: prefer based on prefer_as_source rule
-                # For destinations (prefer_as_source=False), prefer *2FL variants
-                # For sources (prefer_as_source=True), prefer FL2* variants
                 if not prefer_as_source:
-                    # Destination: prefer *2FL variant (e.g., MH2FL over FL2MH)
-                    if junc1[3].endswith('2FL'):
+                    # Destination: prefer destination junction variant
+                    if is_destination_junction(junc1[3]):
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    elif junc2[3].endswith('2FL'):
+                    elif is_destination_junction(junc2[3]):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                     else:
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
                 else:
-                    # Source: prefer FL2* variant (e.g., FL2MH over MH2FL)
-                    if junc1[3].startswith('FL2'):
+                    # Source: prefer source junction variant
+                    if is_source_junction(junc1[3]):
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                    elif junc2[3].startswith('FL2'):
+                    elif is_source_junction(junc2[3]):
                         conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                     else:
                         conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
         else:
             # No source info: use prefer_as_source rule
-            # For destinations (prefer_as_source=False), prefer *2FL variants
-            # For sources (prefer_as_source=True), prefer FL2* variants
             if not prefer_as_source:
-                # Destination: prefer *2FL variant
-                if junc1[3].endswith('2FL'):
+                # Destination: prefer destination junction variant
+                if is_destination_junction(junc1[3]):
                     conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                elif junc2[3].endswith('2FL'):
+                elif is_destination_junction(junc2[3]):
                     conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                 else:
                     conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
             else:
-                # Source: prefer FL2* variant
-                if junc1[3].startswith('FL2'):
+                # Source: prefer source junction variant
+                if is_source_junction(junc1[3]):
                     conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
-                elif junc2[3].startswith('FL2'):
+                elif is_source_junction(junc2[3]):
                     conn_id, conn_x, conn_y = junc2[3], junc2[4], junc2[5]
                 else:
                     conn_id, conn_x, conn_y = junc1[3], junc1[4], junc1[5]
@@ -348,8 +360,7 @@ def find_connector_above_pin_prefer_ground(
         x_dist = abs(elem.x - pin_x)
         y_dist = pin_y - elem.y
 
-        is_junction = ('2FL' in elem.content or 'FL2' in elem.content)
-        max_x_dist = 100 if is_junction else 50
+        max_x_dist = 100 if is_junction_connector(elem.content) else 50
 
         if x_dist < max_x_dist and y_dist > 5:
             connectors_above.append((y_dist, elem.content, elem.x, elem.y))
@@ -359,10 +370,10 @@ def find_connector_above_pin_prefer_ground(
 
     connectors_above.sort(key=lambda c: c[0])
 
-    # CRITICAL: Prefer *2FL pattern (MH2FL, FTL2FL) for ground connections
-    to_fl_variants = [c for c in connectors_above if c[1].endswith('2FL')]
-    if to_fl_variants:
-        return to_fl_variants[0][1]
+    # Prefer destination junction variants for ground connections
+    dest_variants = [c for c in connectors_above if is_destination_junction(c[1])]
+    if dest_variants:
+        return dest_variants[0][1]
 
     # Fall back to closest connector
     return connectors_above[0][1]
@@ -495,8 +506,7 @@ def find_all_connectors_above_pin(
         x_dist = abs(elem.x - pin_x)
         y_dist = pin_y - elem.y
 
-        is_junction = ('2FL' in elem.content or 'FL2' in elem.content)
-        max_x_dist = 100 if is_junction else 50
+        max_x_dist = 100 if is_junction_connector(elem.content) else 50
 
         if x_dist < max_x_dist and y_dist > 5:
             connectors_above.append((y_dist, elem.content, elem.x, elem.y))
