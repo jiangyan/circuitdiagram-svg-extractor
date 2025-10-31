@@ -10,6 +10,7 @@ from models import Connection, TextElement, WireSpec
 from connector_finder import (
     is_connector_id,
     is_splice_point,
+    is_pin_number,
     find_all_connectors_above_pin
 )
 from .base_extractor import BaseExtractor, deduplicate_connections
@@ -120,7 +121,7 @@ class GroundConnectionExtractor(BaseExtractor):
                 pins_with_connectors = []
 
                 for elem in self.text_elements:
-                    if elem.content.isdigit():
+                    if is_pin_number(elem.content):
                         y_dist = abs(elem.y - path_y)
                         x_dist = abs(elem.x - path_x)
 

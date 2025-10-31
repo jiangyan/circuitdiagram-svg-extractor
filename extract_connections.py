@@ -10,6 +10,7 @@ from typing import Set, Tuple
 from models import IDGenerator
 from svg_parser import (
     parse_text_elements,
+    merge_multiline_connectors,
     parse_splice_dots,
     parse_st17_polylines,
     parse_all_polylines,
@@ -151,6 +152,8 @@ def main():
 
     print("Parsing SVG file...")
     text_elements = parse_text_elements(svg_file)
+    # Merge multiline connector IDs (e.g., MAIN202 with (XR-) → "MAIN202 (XR-)")
+    text_elements = merge_multiline_connectors(text_elements)
     splice_dots = parse_splice_dots(svg_file)
     st17_polylines = parse_st17_polylines(svg_file)
     all_polylines = parse_all_polylines(svg_file)

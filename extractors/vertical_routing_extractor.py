@@ -10,6 +10,7 @@ from models import Connection, TextElement, WireSpec, ConnectionPoint
 from connector_finder import (
     is_connector_id,
     is_splice_point,
+    is_pin_number,
     find_connector_above_pin,
     find_all_connectors_above_pin,
     find_nearest_connection_point
@@ -28,10 +29,10 @@ class VerticalRoutingExtractor(BaseExtractor):
         self.st1_paths = st1_paths
 
         # Calculate component bounds once (for filtering external routing wires)
-        # Only include: pins (pure digits), connector IDs, splice points
+        # Only include: pins (regular or dash-separated), connector IDs, splice points
         # Exclude: descriptive labels like "2Row RH Seat Memory Button Backlight"
         def is_component_element(content: str) -> bool:
-            return (content.isdigit() or  # Pins
+            return (is_pin_number(content) or  # Pins (regular or dash-separated)
                    is_connector_id(content) or  # Connector IDs
                    is_splice_point(content))  # Splice points (SP001, SP_CUSTOM_001)
 
@@ -155,14 +156,14 @@ class VerticalRoutingExtractor(BaseExtractor):
                     for elem in self.text_elements:
                         dist = math.sqrt((elem.x - px)**2 + (elem.y - py)**2)
                         if dist < min_dist:
-                            # Accept: connector IDs, pins (digits), or splice points
-                            if is_connector_id(elem.content) or elem.content.isdigit() or is_splice_point(elem.content):
+                            # Accept: connector IDs, pins (regular or dash-separated), or splice points
+                            if is_connector_id(elem.content) or is_pin_number(elem.content) or is_splice_point(elem.content):
                                 min_dist = dist
                                 nearest_connector = elem
 
                     if nearest_connector:
                         # If it's a pin, find the connector above it
-                        if nearest_connector.content.isdigit():
+                        if is_pin_number(nearest_connector.content):
                             conn_result = find_connector_above_pin(
                                 nearest_connector.x, nearest_connector.y, self.text_elements,
                                 prefer_as_source=False
@@ -574,7 +575,7 @@ class VerticalRoutingExtractor(BaseExtractor):
                     # Check all text elements to see if any are on/near this line segment
                     for elem in self.text_elements:
                         # Check if element is a connection point (pin or splice)
-                        if not (elem.content.isdigit() or is_splice_point(elem.content)):
+                        if not (is_pin_number(elem.content) or is_splice_point(elem.content)):
                             continue
 
                         # Check if point is near the line segment

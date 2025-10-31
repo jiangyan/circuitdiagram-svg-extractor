@@ -6,6 +6,21 @@ from collections import defaultdict
 from models import Connection
 
 
+def format_multiline_for_markdown(text: str) -> str:
+    """
+    Format multiline text for markdown table display.
+
+    Replaces newlines with <br> tags for proper display in markdown tables.
+
+    Args:
+        text: Text that may contain newlines
+
+    Returns:
+        Text with newlines replaced by <br> tags
+    """
+    return text.replace('\n', '<br>')
+
+
 def format_markdown_table(connections: List[Connection]) -> str:
     """
     Format connections as a markdown table.
@@ -25,7 +40,10 @@ def format_markdown_table(connections: List[Connection]) -> str:
     lines.append("|------|----------|-----|--------|---------|-------|")
 
     for conn in sorted_connections:
-        line = f"| {conn.from_id} | {conn.from_pin} | {conn.to_id} | {conn.to_pin} | {conn.wire_dm} | {conn.wire_color} |"
+        # Format multiline connector IDs with <br> tags for markdown display
+        from_id = format_multiline_for_markdown(conn.from_id)
+        to_id = format_multiline_for_markdown(conn.to_id)
+        line = f"| {from_id} | {conn.from_pin} | {to_id} | {conn.to_pin} | {conn.wire_dm} | {conn.wire_color} |"
         lines.append(line)
 
     return "\n".join(lines)
@@ -51,7 +69,9 @@ def format_grouped_by_source(connections: List[Connection]) -> str:
 
     lines = []
     for connector_id, conns in sorted_groups:
-        lines.append(f"\n### {connector_id} ({len(conns)} connections)\n")
+        # Format multiline connector IDs with <br> tags for markdown display
+        formatted_connector_id = format_multiline_for_markdown(connector_id)
+        lines.append(f"\n### {formatted_connector_id} ({len(conns)} connections)\n")
         lines.append("| From Pin | To | To Pin | Wire DM | Color |")
         lines.append("|----------|-----|--------|---------|-------|")
 
@@ -59,8 +79,9 @@ def format_grouped_by_source(connections: List[Connection]) -> str:
         sorted_conns = sorted(conns)
 
         for conn in sorted_conns:
+            to_id = format_multiline_for_markdown(conn.to_id)
             lines.append(
-                f"| {conn.from_pin} | {conn.to_id} | {conn.to_pin} | "
+                f"| {conn.from_pin} | {to_id} | {conn.to_pin} | "
                 f"{conn.wire_dm} | {conn.wire_color} |"
             )
 

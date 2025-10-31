@@ -17,6 +17,7 @@ from models import Connection, TextElement, WireSpec, ConnectionPoint
 from connector_finder import (
     is_connector_id,
     is_splice_point,
+    is_pin_number,
     find_all_connectors_above_pin
 )
 
@@ -63,7 +64,7 @@ class HorizontalColoredWireExtractor:
                 # Example: G303(s), G22B(m)
                 is_ground_connector = is_connector_id(elem.content) and '(' in elem.content
 
-                if not (elem.content.isdigit() or is_splice_point(elem.content) or is_ground_connector):
+                if not (is_pin_number(elem.content) or is_splice_point(elem.content) or is_ground_connector):
                     continue
 
                 # Check if element is on same horizontal level as wire
@@ -164,7 +165,7 @@ class HorizontalColoredWireExtractor:
 
         # Find pins on the same horizontal level
         for elem in self.text_elements:
-            if not (elem.content.isdigit() or is_splice_point(elem.content)):
+            if not (is_pin_number(elem.content) or is_splice_point(elem.content)):
                 continue
 
             y_dist = abs(elem.y - target_y)

@@ -10,6 +10,7 @@ from models import Connection, TextElement, WireSpec
 from connector_finder import (
     is_connector_id,
     is_splice_point,
+    is_pin_number,
     find_connector_above_pin
 )
 
@@ -164,9 +165,9 @@ class HorizontalWireExtractor:
             for elem in self.text_elements:
                 # IMPORTANT: Check if element is within ±10 of ANY spec in the group
                 # (not just the first spec, since specs in a group can have different Y positions)
-                # Include: pins (digits), splice points, AND ground connectors (with parentheses)
+                # Include: pins (digits or dash-separated), splice points, AND ground connectors (with parentheses)
                 is_ground_connector = is_connector_id(elem.content) and '(' in elem.content
-                if elem.content.isdigit() or is_splice_point(elem.content) or is_ground_connector:
+                if is_pin_number(elem.content) or is_splice_point(elem.content) or is_ground_connector:
                     for spec in specs_on_line:
                         if abs(elem.y - spec.y) < 10:
                             connection_points.append(elem)

@@ -41,6 +41,139 @@ def parse_text_elements(svg_file: str) -> List[TextElement]:
     return text_elements
 
 
+def merge_multiline_connectors(text_elements: List[TextElement]) -> List[TextElement]:
+    """
+    Merge connector option labels and create multiline connector IDs for shielded pairs.
+
+    Handles two cases:
+    1. Horizontal pairing: MAIN202 + (XR-) → "MAIN202 (XR-)"
+    2. Vertical pairing (shielded pairs):
+       MAIN202 (XR-) at Y=304
+       MAIN642 (XR+) at Y=312
+       → "MAIN202 (XR-)\\nMAIN642 (XR+)"
+
+    Args:
+        text_elements: List of text elements
+
+    Returns:
+        List of text elements with merged/combined connectors
+    """
+    from connector_finder import is_connector_id
+
+    # Step 1: Merge horizontal option labels with base connectors
+    option_to_connector = {}  # Maps option_index -> connector_index
+
+    for i, elem in enumerate(text_elements):
+        # Check if this is an option label like "(XR-)", "(XR+)"
+        if re.match(r'^\([A-Z]+[+-]\)$', elem.content):
+            # Find connector to the left (within 30 X units, same Y level ±3 units)
+            for j, other in enumerate(text_elements):
+                if j == i:
+                    continue
+
+                # Check if other is a connector ID to the left
+                if is_connector_id(other.content):
+                    # Must be to the left and on same Y level
+                    if (other.x < elem.x and
+                        abs(other.y - elem.y) < 3 and
+                        abs(elem.x - other.x) < 30):
+                        # Record this pairing
+                        option_to_connector[i] = j
+                        break
+
+    # Build list with horizontal merges
+    processed_indices = set()
+    horizontally_merged = []
+
+    for i, elem in enumerate(text_elements):
+        if i in processed_indices:
+            continue
+
+        # Check if this element is a connector that has an option label
+        if i in option_to_connector.values():
+            # Find the option label(s) for this connector
+            option_indices = [opt_i for opt_i, conn_i in option_to_connector.items() if conn_i == i]
+            if option_indices:
+                option_idx = option_indices[0]
+                option_elem = text_elements[option_idx]
+                # Merge: create new element with combined content
+                combined_content = f"{elem.content} {option_elem.content}"
+                horizontally_merged.append(TextElement(combined_content, elem.x, elem.y))
+                processed_indices.add(i)
+                processed_indices.add(option_idx)
+                continue
+
+        # Check if this is an option label that was already merged
+        if i in option_to_connector:
+            processed_indices.add(i)
+            continue
+
+        # Regular element
+        horizontally_merged.append(elem)
+        processed_indices.add(i)
+
+    # Step 2: Detect and merge vertical shielded pairs
+    # Find connectors with (XR-) and (XR+) options that are vertically aligned
+    processed_indices = set()
+    final_merged = []
+
+    for i, elem in enumerate(horizontally_merged):
+        if i in processed_indices:
+            continue
+
+        # Check if this is a connector with (XR-) or (XR+)
+        if ' (XR-)' in elem.content or ' (XR+)' in elem.content:
+            # Look for its pair (vertically stacked, within ±15 Y units, similar X position ±30 units)
+            paired = False
+            for j, other in enumerate(horizontally_merged):
+                if j <= i or j in processed_indices:
+                    continue
+
+                # Check if other is also an XR connector
+                if ' (XR-)' in other.content or ' (XR+)' in other.content:
+                    # Must be vertically aligned (similar X, different Y)
+                    x_diff = abs(other.x - elem.x)
+                    y_diff = abs(other.y - elem.y)
+
+                    # Vertically stacked: within ±30 X units, 5-20 Y units apart
+                    if x_diff < 30 and 5 < y_diff < 20:
+                        # Must have opposite options (one XR-, one XR+)
+                        has_xr_minus = '(XR-)' in elem.content or '(XR-)' in other.content
+                        has_xr_plus = '(XR+)' in elem.content or '(XR+)' in other.content
+
+                        if has_xr_minus and has_xr_plus:
+                            # Create multiline connector (use newline as separator)
+                            # Order: XR- first, then XR+
+                            if '(XR-)' in elem.content:
+                                multiline_content = f"{elem.content}\n{other.content}"
+                                use_y = elem.y
+                            else:
+                                multiline_content = f"{other.content}\n{elem.content}"
+                                use_y = other.y
+
+                            # CRITICAL: Use AVERAGE X coordinate of both connectors
+                            # This represents the center position between the two stacked connectors
+                            # Important for find_connector_above_pin "between" logic
+                            use_x = (elem.x + other.x) / 2
+
+                            final_merged.append(TextElement(multiline_content, use_x, use_y))
+                            processed_indices.add(i)
+                            processed_indices.add(j)
+                            paired = True
+                            break
+
+            if not paired:
+                # No pair found, keep as single-line connector
+                final_merged.append(elem)
+                processed_indices.add(i)
+        else:
+            # Not an XR connector
+            final_merged.append(elem)
+            processed_indices.add(i)
+
+    return final_merged
+
+
 def parse_splice_dots(svg_file: str) -> List[Tuple[float, float]]:
     """
     Parse splice point dots from SVG.
@@ -630,6 +763,9 @@ def parse_horizontal_colored_wires(svg_file: str) -> List['HorizontalWireSegment
 
     # CSS class to standard wire color code mapping
     COLOR_MAP = {
+        'st5': 'BU',      # #0000F8 - Blue
+        'st6': 'BUDK',    # #083A94 - Blue/Dark blue
+        'st7': 'BK',      # #000000 - Black
         'st8': 'GN',      # #00B42B - Green
         'st9': 'PU',      # #A54CFF - Purple
         'st10': 'GY',     # #B3B3B3 - Gray

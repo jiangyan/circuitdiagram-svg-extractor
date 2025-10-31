@@ -13,6 +13,7 @@ from typing import List, Tuple
 from models import Connection, TextElement
 from connector_finder import (
     is_splice_point,
+    is_pin_number,
     find_connector_above_pin
 )
 
@@ -72,8 +73,8 @@ class GridWireExtractor:
         pins = []
 
         for elem in self.text_elements:
-            # Pin numbers are single digits or small numbers
-            if elem.content.isdigit() or is_splice_point(elem.content):
+            # Pin numbers can be single digits or dash-separated format
+            if is_pin_number(elem.content) or is_splice_point(elem.content):
                 # Find connector above this pin
                 result = find_connector_above_pin(elem.x, elem.y, self.text_elements)
                 if result:

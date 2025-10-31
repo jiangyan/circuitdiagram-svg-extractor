@@ -51,6 +51,22 @@ def is_connector_id(text: str) -> bool:
     # Allow underscores between letters
     if re.match(r'^[A-Z_]+\d+[A-Z_]*\([a-z]\)$', text):
         return True
+    # Multiline connector with options: MAIN202 (XR-), MAIN642 (XR+)
+    # Format: CONNECTOR_ID space (OPTION)
+    if re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z_]{0,5}\s+\([A-Z]+[+-]\)$', text):
+        return True
+    # Shielded pair (multiline): "MAIN202 (XR-)\nMAIN642 (XR+)"
+    # Check if text contains newline and both lines match connector pattern
+    if '\n' in text:
+        lines = text.split('\n')
+        if len(lines) == 2:
+            # Both lines should match connector patterns
+            line1_match = (re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z_]{0,5}$', lines[0]) or
+                          re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z_]{0,5}\s+\([A-Z]+[+-]\)$', lines[0]))
+            line2_match = (re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z_]{0,5}$', lines[1]) or
+                          re.match(r'^[A-Z]{2,4}\d{1,5}[A-Z_]{0,5}\s+\([A-Z]+[+-]\)$', lines[1]))
+            if line1_match and line2_match:
+                return True
     return False
 
 
@@ -76,6 +92,27 @@ def is_splice_point(text: str) -> bool:
     return False
 
 
+def is_pin_number(text: str) -> bool:
+    """
+    Check if text is a pin number.
+
+    Supports both regular format (1, 2, 3) and dash-separated format (3-1, 4-2).
+
+    Args:
+        text: Text to check
+
+    Returns:
+        True if text is a valid pin number
+    """
+    # Regular pin: pure digits
+    if text.isdigit():
+        return True
+    # Dash-separated pin: N-M format (e.g., "3-1", "4-2")
+    if re.match(r'^\d+-\d+$', text):
+        return True
+    return False
+
+
 def is_wire_spec(text: str) -> bool:
     """
     Check if text is a wire specification.
@@ -86,7 +123,7 @@ def is_wire_spec(text: str) -> bool:
     Returns:
         True if text matches wire spec pattern (e.g., "0.35,GY/PU" or "0.35, GY/PU")
     """
-    return bool(re.match(r'^([\d.]+),\s*([A-Z]{2}(?:/[A-Z]{2})?)$', text))
+    return bool(re.match(r'^([\d.]+),\s*([A-Z]{2,}(?:/[A-Z]{2,})?)$', text))
 
 
 def parse_wire_spec(text: str) -> Optional[Tuple[str, str]]:
@@ -99,7 +136,7 @@ def parse_wire_spec(text: str) -> Optional[Tuple[str, str]]:
     Returns:
         Tuple of (diameter, color) or None if not a wire spec
     """
-    match = re.match(r'^([\d.]+),\s*([A-Z]{2}(?:/[A-Z]{2})?)$', text)
+    match = re.match(r'^([\d.]+),\s*([A-Z]{2,}(?:/[A-Z]{2,})?)$', text)
     if match:
         return match.group(1), match.group(2)
     return None
