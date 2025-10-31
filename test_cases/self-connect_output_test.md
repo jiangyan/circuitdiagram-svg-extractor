@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 37
+**Total Connections:** 35
 
 ## All Connections (Sorted by From Connector)
 
@@ -23,7 +23,6 @@
 | MAIN42 | 6 | MAIN42 | 49 | 4.0 | PU |
 | MAIN42 | 42 | MAIN76 | 54 | 0.5 | RD/BU |
 | MAIN42 | 48 | MAIN219 | 6 | 0.35 | OG/BK |
-| MAIN42 | 63 | SP077 |  | 0.5 | GN/WH |
 | MAIN75 | 23 | MAIN542 | 9 | 0.5 | BK/WH |
 | MAIN75 | 24 | MAIN542 | 10 | 0.5 | BK/BU |
 | MAIN75 | 25 | MAIN32 | 2 | 0.5 | YE/BN |
@@ -42,7 +41,6 @@
 | MAIN99 | 2 | MAIN75 | 28 | 0.5 | PU/WH |
 | PS100 | 2 | PS181 | 1 | 0.5 | YE |
 | PS100 | 3 | PS181 | 2 | 0.5 | OG |
-| SP077 |  | MAIN42 | 46 | 0.5 | GN/WH |
 
 ## Connections Grouped by Source Connector
 
@@ -90,14 +88,13 @@
 | 1 | MAIN76 | 29 | 0.5 | GY |
 | 2 | MAIN76 | 30 | 0.5 | PK |
 
-### MAIN42 (4 connections)
+### MAIN42 (3 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
 | 6 | MAIN42 | 49 | 4.0 | PU |
 | 42 | MAIN76 | 54 | 0.5 | RD/BU |
 | 48 | MAIN219 | 6 | 0.35 | OG/BK |
-| 63 | SP077 |  | 0.5 | GN/WH |
 
 ### MAIN75 (4 connections)
 
@@ -136,9 +133,3 @@
 |----------|-----|--------|---------|-------|
 | 2 | PS181 | 1 | 0.5 | YE |
 | 3 | PS181 | 2 | 0.5 | OG |
-
-### SP077 (1 connections)
-
-| From Pin | To | To Pin | Wire DM | Color |
-|----------|-----|--------|---------|-------|
-|  | MAIN42 | 46 | 0.5 | GN/WH |

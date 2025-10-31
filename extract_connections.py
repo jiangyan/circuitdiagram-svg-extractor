@@ -40,10 +40,10 @@ def load_exclusions(svg_file: str = None) -> Tuple[Set[Tuple[str, str]], Set[Tup
     """
     Load optional exclusion configuration for reference-only pins and specific connections.
 
-    Supports filename-specific exclusion configs:
-    1. First tries <svg_basename>_exclusions.json (e.g., intersection_exclusions.json)
-    2. Falls back to exclusions_config.json
-    3. Returns empty sets if neither exists
+    Simple one-config-per-diagram approach:
+    - Each SVG file can have its own exclusion config: {svg_basename}_exclusions.json
+    - Example: vertical-intersection.svg → vertical-intersection_exclusions.json
+    - Falls back to global exclusions_config.json if diagram-specific config doesn't exist
 
     Args:
         svg_file: Path to SVG file (optional, for filename-specific config)

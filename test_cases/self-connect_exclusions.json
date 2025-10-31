@@ -1,31 +1,30 @@
 {
-    "description": "Exclusion configuration for reference-only pins",
+    "description": "Exclusion configuration with diagram-specific scoping",
     "exclusions": [
       {
         "connector_id": "MAIN76",
         "pin": "17",
-        "reason": "Reference connection to external diagram"
+        "reason": "Reference connection to external diagram",
+        "apply_to_diagrams": ["vertical-intersection.svg"]
       },
       {
         "connector_id": "MAIN76",
         "pin": "18",
-        "reason": "Reference connection to external diagram"
+        "reason": "Reference connection to external diagram",
+        "apply_to_diagrams": ["vertical-intersection.svg"]
       },
       {
         "connector_id": "UH07",
         "pin": "",
-        "reason": "Reference connection to external diagram"
-      },
-      {
-        "connector_id": "SP077",
-        "pin": "",
-        "reason": "Reference connection to external diagram"
+        "reason": "Reference connection to external diagram UH07→UH08 orange wire",
+        "apply_to_diagrams": ["vertical-intersection.svg"]
       }
     ],
     "notes": [
-      "Only exclude pins that ONLY connect to text labels or external references",
-      "If a pin has valid connections to connectors/splices, keep those connections"
+      "Diagram scoping: 'apply_to_diagrams' field limits exclusion to specific SVG files",
+      "If 'apply_to_diagrams' is missing, exclusion applies to ALL diagrams (global)",
+      "Example: SP077 is excluded in vertical-intersection.svg (reference label) but allowed in self-connect.svg (valid splice)"
     ]
   }
-  
+
   

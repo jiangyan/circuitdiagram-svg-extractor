@@ -1,0 +1,30 @@
+{
+  "description": "Exclusion configuration for vertical-intersection.svg",
+  "exclusions": [
+    {
+      "connector_id": "MAIN76",
+      "pin": "17",
+      "reason": "Reference connection to external diagram"
+    },
+    {
+      "connector_id": "MAIN76",
+      "pin": "18",
+      "reason": "Reference connection to external diagram"
+    },
+    {
+      "connector_id": "UH07",
+      "pin": "",
+      "reason": "Reference connection to external diagram UH07→UH08 orange wire"
+    },
+    {
+      "connector_id": "SP077",
+      "pin": "",
+      "reason": "Reference label to external diagram D11.12V Power Supply System 11"
+    }
+  ],
+  "notes": [
+    "Simple one-config-per-diagram approach",
+    "Each diagram's exclusions only apply to that specific diagram",
+    "SP077 is excluded here (reference label) but would be valid in other diagrams where it's a real splice point"
+  ]
+}

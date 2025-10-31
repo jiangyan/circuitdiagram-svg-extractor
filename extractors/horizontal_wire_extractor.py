@@ -19,7 +19,9 @@ class HorizontalWireExtractor:
 
     def __init__(self, text_elements: List[TextElement], wire_specs: List[WireSpec], polylines: List[str] = None):
         self.text_elements = text_elements
-        self.wire_specs = wire_specs
+        # CRITICAL: Filter out wire specs on polyline horizontal segments
+        # These should be handled by VerticalRoutingExtractor, not HorizontalWireExtractor
+        self.wire_specs = self._filter_wire_specs_on_polylines(wire_specs, polylines or [])
         self.seen_pin_pairs: Set[Tuple] = set()
 
         # CRITICAL: Identify splices on vertical polyline segments
@@ -60,6 +62,77 @@ class HorizontalWireExtractor:
                             splices_on_vertical.add(sp_id)
 
         return splices_on_vertical
+
+    def _filter_wire_specs_on_polylines(self, wire_specs: List[WireSpec], polylines: List[str]) -> List[WireSpec]:
+        """
+        Filter out wire specs that are on polyline horizontal segments.
+
+        Wire specs on polylines should be handled by VerticalRoutingExtractor,
+        not HorizontalWireExtractor, to avoid creating false horizontal wire connections.
+
+        Example: MAIN42,6 → MAIN42,49 via purple polyline with "4.0,PU" spec should NOT
+        create a false MAIN42,6 → MAIN76,24 connection just because MAIN76,24 happens
+        to be at the same Y-coordinate.
+
+        Args:
+            wire_specs: List of all wire specifications
+            polylines: List of polyline point strings
+
+        Returns:
+            List of wire specs NOT on polyline segments
+        """
+        if not polylines:
+            return wire_specs
+
+        # Parse all polylines and identify horizontal segments
+        horizontal_segments = []
+        for polyline in polylines:
+            points = polyline.split()
+            parsed_points = []
+            for point in points:
+                if ',' in point:
+                    parts = point.split(',')
+                    if len(parts) == 2:
+                        try:
+                            px = float(parts[0])
+                            py = float(parts[1])
+                            parsed_points.append((px, py))
+                        except:
+                            pass
+
+            # Find horizontal segments
+            for i in range(len(parsed_points) - 1):
+                x1, y1 = parsed_points[i]
+                x2, y2 = parsed_points[i + 1]
+
+                # Horizontal segment (Y change < 5 units)
+                if abs(y2 - y1) < 5:
+                    min_x, max_x = min(x1, x2), max(x1, x2)
+                    seg_y = (y1 + y2) / 2
+                    horizontal_segments.append((min_x, max_x, seg_y))
+
+        # Filter wire specs
+        filtered_specs = []
+        excluded_count = 0
+        for spec in wire_specs:
+            is_on_polyline = False
+
+            for min_x, max_x, seg_y in horizontal_segments:
+                # Check if spec is within ±15 Y units of segment
+                if abs(spec.y - seg_y) < 15:
+                    # Check if spec X is within segment range (with tolerance)
+                    if min_x - 50 < spec.x < max_x + 50:
+                        is_on_polyline = True
+                        excluded_count += 1
+                        break
+
+            if not is_on_polyline:
+                filtered_specs.append(spec)
+
+        if excluded_count > 0:
+            print(f"  (Filtered {excluded_count} wire specs on polyline segments)")
+
+        return filtered_specs
 
     def extract_connections(self) -> List[Connection]:
         """

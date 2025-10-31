@@ -53,27 +53,34 @@ class BaseExtractor:
         # Sort by length (longest first)
         horizontal_segments.sort(reverse=True)
 
-        # Use the longest horizontal segment to find wire spec
-        _, x1, y1, x2, y2 = horizontal_segments[0]
-        min_x, max_x = min(x1, x2), max(x1, x2)
-        segment_y = (y1 + y2) / 2
+        # CRITICAL: When there are multiple segments with the same max length,
+        # pick the segment that has a wire spec nearby (within ±15 Y units)
+        # Example: MAIN42,6 → MAIN42,49 has two equal-length horizontal segments,
+        # but the wire spec "4.0,PU" is only near the top segment
+        max_length = horizontal_segments[0][0]
+        longest_segments = [seg for seg in horizontal_segments if seg[0] == max_length]
 
-        # Find wire spec on this segment
-        closest_spec = None
-        min_dist = float('inf')
+        best_spec = None
+        best_spec_dist = float('inf')
 
-        for spec in self.wire_specs:
-            # Spec must be on the horizontal segment (within ±15 Y units)
-            if abs(spec.y - segment_y) < 15:
-                # Spec should be between the X endpoints of the segment
-                if min_x - 50 < spec.x < max_x + 50:
-                    dist = abs(spec.y - segment_y)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_spec = spec
+        # Try each longest segment and find the one with a wire spec nearby
+        for _, x1, y1, x2, y2 in longest_segments:
+            min_x, max_x = min(x1, x2), max(x1, x2)
+            segment_y = (y1 + y2) / 2
 
-        if closest_spec:
-            return (closest_spec.diameter, closest_spec.color)
+            # Find wire spec on this segment
+            for spec in self.wire_specs:
+                # Spec must be on the horizontal segment (within ±15 Y units)
+                if abs(spec.y - segment_y) < 15:
+                    # Spec should be between the X endpoints of the segment
+                    if min_x - 50 < spec.x < max_x + 50:
+                        dist = abs(spec.y - segment_y)
+                        if dist < best_spec_dist:
+                            best_spec_dist = dist
+                            best_spec = spec
+
+        if best_spec:
+            return (best_spec.diameter, best_spec.color)
         return (None, None)
 
     def _find_wire_spec_near_path(self, path_points: List[Tuple[float, float]], source_point: Tuple[float, float] = None) -> Tuple[str, str]:
@@ -185,24 +192,43 @@ def deduplicate_connections(connections: List[Connection]) -> List[Connection]:
     Returns:
         List of unique Connection objects
     """
-    # CRITICAL: Filter out self-loop connections (connector/splice connecting to itself)
-    # Example invalid connections: SP123 → SP123, RRS111,5 → RRS111,5
-    # These are caused by arrows pointing to descriptions/labels
+    # CRITICAL: Filter out self-loop and self-connection
+    # 1. Self-loop: Same connector/splice, same pin (e.g., SP123 → SP123, RRS111,5 → RRS111,5)
+    # 2. Self-connection: Same connector, different pins (e.g., MAIN76,17 → MAIN76,18)
+    # These are caused by arrows pointing to descriptions/labels or misdetected routing paths
     filtered = []
     self_loop_count = 0
+    self_connection_count = 0
 
     for conn in connections:
-        # Check if connection is a self-loop
+        # Check if connection is a self-loop (same ID, same pin)
         is_self_loop = (conn.from_id == conn.to_id and conn.from_pin == conn.to_pin)
+
+        # Check if connection is a self-connection (same connector, different pins)
+        # BUT: Allow self-connections WITH wire specs (routing polylines like MAIN42,6 → MAIN42,49)
+        # ONLY filter self-connections WITHOUT wire specs (likely errors from misdetected routing)
+        from connector_finder import is_splice_point
+        is_invalid_self_connection = (
+            conn.from_id == conn.to_id and
+            conn.from_pin != conn.to_pin and
+            not is_splice_point(conn.from_id) and  # Allow splice → splice (valid)
+            not conn.wire_dm and not conn.wire_color  # Only filter if NO wire spec
+        )
 
         if is_self_loop:
             self_loop_count += 1
+            continue
+
+        if is_invalid_self_connection:
+            self_connection_count += 1
             continue
 
         filtered.append(conn)
 
     if self_loop_count > 0:
         print(f"Filtered out {self_loop_count} self-loop connections")
+    if self_connection_count > 0:
+        print(f"Filtered out {self_connection_count} self-connections (same connector, different pins)")
 
     seen = {}  # key -> Connection
 
