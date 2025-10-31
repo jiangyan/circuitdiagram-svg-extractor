@@ -1,0 +1,31 @@
+{
+    "description": "Exclusion configuration for reference-only pins",
+    "exclusions": [
+      {
+        "connector_id": "MAIN76",
+        "pin": "17",
+        "reason": "Reference connection to external diagram"
+      },
+      {
+        "connector_id": "MAIN76",
+        "pin": "18",
+        "reason": "Reference connection to external diagram"
+      },
+      {
+        "connector_id": "UH07",
+        "pin": "",
+        "reason": "Reference connection to external diagram"
+      },
+      {
+        "connector_id": "SP077",
+        "pin": "",
+        "reason": "Reference connection to external diagram"
+      }
+    ],
+    "notes": [
+      "Only exclude pins that ONLY connect to text labels or external references",
+      "If a pin has valid connections to connectors/splices, keep those connections"
+    ]
+  }
+  
+  
