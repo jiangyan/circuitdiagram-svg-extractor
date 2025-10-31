@@ -251,7 +251,6 @@ class HorizontalWireExtractor:
 
                 connection_points = unique_x_points
 
-
                 # Create connections between ALL ADJACENT pairs of connection points on this line
                 # This handles: pin→splice, splice→splice, splice→pin, pin→pin
                 for i in range(len(connection_points) - 1):
@@ -296,10 +295,10 @@ class HorizontalWireExtractor:
                     right_dist = abs(right_point.y - wire_spec.y)
                     dist_diff = abs(left_dist - right_dist)
 
-                    # If distance difference > 5 units, they're on different wires
-                    # This filters: one at ~6 units, one at ~0.1 units (diff=5.9)
-                    # But keeps: both at ~5 units (diff=0), or pin at ~5.4 + ground at ~1.1 (diff=4.3)
-                    if dist_diff > 5:
+                    # If distance difference > 6 units, they're on different wires
+                    # This filters: one at ~7 units, one at ~0.1 units (diff=6.9)
+                    # But keeps: both at ~5 units (diff=0), pin at ~6.1 + ground at ~1.1 (diff=5.0)
+                    if dist_diff > 6:
                         # Points are at very different Y distances from spec - different wires
                         continue
 

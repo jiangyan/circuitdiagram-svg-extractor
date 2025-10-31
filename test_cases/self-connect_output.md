@@ -1,6 +1,6 @@
 # Circuit Diagram Wire Connections
 
-**Total Connections:** 37
+**Total Connections:** 38
 
 ## All Connections (Sorted by From Connector)
 
@@ -38,6 +38,7 @@
 | MAIN76 | 40 | MAIN67 | 2 | 0.5 | BU |
 | MAIN76 | 41 | MAIN554 | 15 | 0.5 | YE |
 | MAIN76 | 42 | MAIN554 | 14 | 0.5 | BK |
+| MAIN76 | 53 | G303(s) |  | 0.5 | BK/PU |
 | MAIN99 | 1 | MAIN75 | 27 | 0.5 | PU |
 | MAIN99 | 2 | MAIN75 | 28 | 0.5 | PU/WH |
 | PS100 | 2 | PS181 | 1 | 0.5 | YE |
@@ -108,7 +109,7 @@
 | 25 | MAIN32 | 2 | 0.5 | YE/BN |
 | 26 | MAIN32 | 1 | 0.5 | YE/PU |
 
-### MAIN76 (10 connections)
+### MAIN76 (11 connections)
 
 | From Pin | To | To Pin | Wire DM | Color |
 |----------|-----|--------|---------|-------|
@@ -122,6 +123,7 @@
 | 40 | MAIN67 | 2 | 0.5 | BU |
 | 41 | MAIN554 | 15 | 0.5 | YE |
 | 42 | MAIN554 | 14 | 0.5 | BK |
+| 53 | G303(s) |  | 0.5 | BK/PU |
 
 ### MAIN99 (2 connections)
 

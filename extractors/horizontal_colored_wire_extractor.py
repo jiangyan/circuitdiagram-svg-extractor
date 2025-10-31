@@ -59,7 +59,11 @@ class HorizontalColoredWireExtractor:
             connection_points = []
 
             for elem in self.text_elements:
-                if not (elem.content.isdigit() or is_splice_point(elem.content)):
+                # CRITICAL: Also check for ground connectors (with parentheses)
+                # Example: G303(s), G22B(m)
+                is_ground_connector = is_connector_id(elem.content) and '(' in elem.content
+
+                if not (elem.content.isdigit() or is_splice_point(elem.content) or is_ground_connector):
                     continue
 
                 # Check if element is on same horizontal level as wire
@@ -73,6 +77,9 @@ class HorizontalColoredWireExtractor:
 
                 # Add connection point
                 if is_splice_point(elem.content):
+                    connection_points.append(ConnectionPoint(elem.content, '', elem.x, elem.y))
+                elif is_ground_connector:
+                    # Ground connector - use directly
                     connection_points.append(ConnectionPoint(elem.content, '', elem.x, elem.y))
                 else:
                     # For pins, determine which side of wire they're on
